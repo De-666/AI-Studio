@@ -33,7 +33,7 @@
       "entry": "game3d.html",
       "run": "npm run game",
       "status": "shipped",
-      "desc": "Game tower defense 3D bằng Three.js, đóng gói 1 file HTML chạy offline: 25 đợt, 5 loại tháp × 5 cấp, 8 loại địch (quái vật & sinh vật ngoài hành tinh), 251 test headless gồm kiểm tra scene graph & frustum."
+      "desc": "Game tower defense 3D bằng Three.js, 1 file HTML chạy offline: 6 bản đồ (20 → 40 đợt, lưới/đường đi/hệ số riêng), bảng xếp hạng top 10 mỗi bản đồ, 5 loại tháp × 5 cấp, 8 loại địch (quái vật tách đàn, alien dịch chuyển tức thời, drone bay), 451 test headless gồm kiểm tra scene graph & frustum."
     }
   ]
 }

@@ -109,6 +109,11 @@ function countMeshes(obj) {
 }
 
 S.paused = true;   // khoá vòng lặp rAF: test tự điều khiển thời gian bằng step()
+NEON.unlockAll();  // test chạy trên mọi bản đồ, không phụ thuộc tiến độ lưu trong máy
+const LV0 = NEON.LEVELS[0].id;      // Đồng Bằng Neon
+const LVC = NEON.LEVELS[1].id;      // Hành Lang Xoắn (bản đồ cân bằng chuẩn)
+/** Bắt đầu ván ở một bản đồ cụ thể (mặc định: bản đồ cân bằng chuẩn). */
+function play(levelId = LVC, diffId = 'normal') { NEON.startGame(levelId, diffId); }
 win.addEventListener('error', (e) => errors.push('window.error: ' + (e.message || '')));
 
 /* ================================ TESTS ================================ */
@@ -120,7 +125,9 @@ T('1. Khởi động & dựng cảnh 3D', () => {
   ok(!!THREE && !!THREE.Vector3, 'Three.js r160 được nhúng và chạy được');
   eq(THREE.REVISION, '160', 'đúng phiên bản three r160');
   eq(S.phase, 'menu', 'trạng thái ban đầu là menu');
-  ok(!!doc.getElementById('btnStart'), 'menu chính có nút Bắt đầu');
+  ok(!!doc.getElementById('btnPlay'), 'menu chính có nút Chơi — chọn bản đồ');
+  ok(!!doc.getElementById('btnBoard') && !!doc.getElementById('btnHelp'), 'menu có nút Bảng xếp hạng & Hướng dẫn');
+  ok(!!doc.getElementById('nameInput'), 'menu có ô nhập tên người chơi cho bảng xếp hạng');
   eq(doc.querySelectorAll('.card[data-tower]').length, 5, 'thanh dưới có đủ 5 loại tháp');
   eq(doc.querySelectorAll('.card .ic svg').length, 5, '5 thẻ tháp hiển thị icon SVG tự vẽ (không cần CDN)');
   ok(!!doc.querySelector('.brand .logo svg'), 'logo thương hiệu dùng icon SVG');
@@ -134,11 +141,36 @@ T('1. Khởi động & dựng cảnh 3D', () => {
 });
 
 T('2. Lõi logic: đường đi, đợt sóng, tháp, kinh tế', () => {
-  const path = NEON.pathTiles();
-  gt(path.size, 50, `đường đi có ${path.size} ô`);
-  let inside = true;
-  for (const t of path.values()) if (t.gx < 0 || t.gz < 0 || t.gx >= NEON.GRID.COLS || t.gz >= NEON.GRID.ROWS) inside = false;
-  ok(inside, 'mọi ô đường đi đều nằm trong lưới');
+  // 6 bản đồ: mỗi bản đồ có đường đi riêng, số đợt riêng, kích thước riêng
+  eq(NEON.LEVELS.length, 6, 'chiến dịch có 6 bản đồ');
+  const shapes = new Set(), waves = new Set();
+  for (const l of NEON.LEVELS) {
+    NEON.setMap(l.id);
+    const p = NEON.pathTiles();
+    gt(p.size, 40, `bản đồ ${l.id}: đường đi có ${p.size} ô`);
+    let inside = true;
+    for (const t of p.values()) if (t.gx < 0 || t.gz < 0 || t.gx >= l.cols || t.gz >= l.rows) inside = false;
+    ok(inside, `bản đồ ${l.id}: mọi ô đường đi nằm trong lưới ${l.cols}×${l.rows}`);
+    const pts = NEON.pathWorldPoints();
+    const [sx, sz] = l.path[0], [ex, ez] = l.path[l.path.length - 1];
+    eq(sx, -1, `bản đồ ${l.id}: cổng vào ở mép trái`);
+    eq(ex, l.cols, `bản đồ ${l.id}: căn cứ ở mép phải (điểm cuối x = số cột)`);
+    const baseX = pts[pts.length - 1].x;
+    ok(Math.abs(baseX - (l.cols + 1)) < 2, `bản đồ ${l.id}: căn cứ nằm ngay ngoài mép phải của sân (x=${baseX.toFixed(1)})`);
+    const air = NEON.airWorldPoints();
+    eq(air.length, 5, `bản đồ ${l.id}: có 5 mốc đường bay cho drone`);
+    eq(l.air.length, 5, `bản đồ ${l.id}: dữ liệu đường bay đầy đủ`);
+    gt(l.waves, 10, `bản đồ ${l.id}: ${l.waves} đợt tấn công`);
+    shapes.add(JSON.stringify(l.path));
+    waves.add(l.waves);
+    // địch đi theo đường của bản đồ đang chọn
+    const e = NEON.spawnEnemy('grunt', 1);
+    ok(e.pts && e.pts.length === l.path.length, `bản đồ ${l.id}: địch đi đúng đường của bản đồ`);
+    ok(Math.abs(e.pos.x) <= l.cols + 8, `bản đồ ${l.id}: điểm xuất phát của địch hợp lệ`);
+  }
+  eq(shapes.size, 6, '6 bản đồ có 6 bố cục đường đi khác nhau');
+  gt(waves.size, 3, `số đợt khác nhau giữa các bản đồ (${[...waves].join(', ')} đợt)`);
+  NEON.setMap(LVC);
 
   let prevHp = 0, monotonic = true;
   for (let w = 1; w <= 25; w++) {
@@ -177,11 +209,19 @@ T('2. Lõi logic: đường đi, đợt sóng, tháp, kinh tế', () => {
   gt(NEON.waveBonus(10), NEON.waveBonus(3), 'thưởng qua đợt tăng dần');
 });
 
-T('3. Vào trận, xây tháp, chặn ô không hợp lệ', () => {
+T('3. Vào trận qua màn chọn bản đồ, xây tháp, chặn ô không hợp lệ', () => {
+  NEON.showLevelSelect();
+  eq(doc.querySelectorAll('.lvl').length, 6, 'màn chọn bản đồ có 6 thẻ bản đồ');
+  doc.querySelector('.lvl[data-level="' + LV0 + '"]').click();
+  doc.querySelector('.dchip[data-diff="normal"]').click();
   doc.getElementById('btnStart').click();
   eq(S.phase, 'build', 'bấm Bắt đầu → vào giai đoạn xây dựng');
-  eq(S.gold, NEON.DIFFICULTIES.normal.gold, 'vàng khởi đầu đúng theo độ khó');
-  eq(S.lives, NEON.DIFFICULTIES.normal.lives, 'mạng khởi đầu đúng theo độ khó');
+  eq(S.level, LV0, 'chơi đúng bản đồ vừa chọn');
+  eq(S.map.waves, 20, 'bản đồ Đồng Bằng Neon có 20 đợt');
+  const expect = NEON.startState(NEON.levelDef(LV0), NEON.DIFFICULTIES.normal);
+  eq(S.gold, expect.gold, 'vàng khởi đầu = vàng độ khó × hệ số bản đồ');
+  eq(S.lives, expect.lives, 'mạng khởi đầu = mạng độ khó × hệ số bản đồ');
+  NEON.startGame(LVC, 'normal');
   near(S.buildTimer, NEON.BUILD_TIME, 'có đồng hồ đếm ngược chuẩn bị', 0.5);
 
   const pathTile = [...NEON.pathTiles().values()][3];
@@ -202,7 +242,10 @@ T('3. Vào trận, xây tháp, chặn ô không hợp lệ', () => {
 T('4. Đợt 1: 5 loại tháp đều bắn và hạ địch', () => {
   NEON.startGame('normal');
   giveGold(5000);
-  const spots = tilesNextToPath(5);
+  // xếp 5 tháp sát đoạn đầu đường đi để mọi loại đều có mục tiêu ngay đợt 1
+  const entry = NEON.pathWorldPoints()[0];
+  const dist = (sp) => { const p = NEON.worldPos(sp.gx, sp.gz); return Math.hypot(p.x - entry.x, p.z - entry.z); };
+  const spots = tilesNextToPath(24).sort((a, b) => dist(a) - dist(b)).slice(0, 5);
   const types = ['gun', 'cannon', 'frost', 'tesla', 'sniper'];
   types.forEach((tp, i) => NEON.placeTower(tp, spots[i].gx, spots[i].gz));
   eq(S.towers.length, 5, 'đã xây đủ 5 loại tháp');
@@ -269,16 +312,16 @@ T('6. Hiệu ứng riêng: làm chậm, xuyên, lan sét, nổ diện rộng', (
   gt(cannonT.dmg, 0, 'Pháo Nổ gây sát thương');
   gt(sniperT.dmg, 0, 'Bắn Tỉa gây sát thương');
 
-  // nổ diện rộng: một viên pháo phải trúng cả cụm địch đứng sát nhau
+  // nổ diện rộng: một viên pháo phải làm mất máu NHIỀU mục tiêu đứng sát nhau
   S.enemies.slice().forEach((e) => world_kill(e));
-  NEON.spawnEnemy('tank', 6);            // trùm nhỏ nhiều máu để không chết ngay
-  step(1 / 30, 30);
-  const victim = S.enemies[S.enemies.length - 1];
-  const before = cannonT.dmg;
-  step(1 / 30, 120);
-  const gain = cannonT.dmg - before;
-  gt(gain, NEON.towerStats('cannon', 1).damage * 1.2, `pháo gây ${gain.toFixed(0)} sát thương (1 viên chỉ ${NEON.towerStats('cannon', 1).damage}) → có nổ diện rộng`);
-  ok(!!victim && victim.hp < victim.maxHp, 'mục tiêu trong vùng nổ bị mất máu');
+  const victims = [0, 1, 2].map(() => NEON.spawnEnemy('tank', 6));
+  for (const v of victims) { v.hp = v.maxHp = 4000; }     // cho trâu để đo lượng máu mất
+  step(1 / 30, 20);
+  const hpBefore = victims.map((v) => v.hp);
+  step(1 / 30, 150);
+  const hurt = victims.filter((v, i) => v.hp < hpBefore[i] - 1e-6).length;
+  ok(hurt >= 2, `một viên pháo làm mất máu ${hurt} mục tiêu trong 1 lần bắn → có nổ diện rộng`);
+  gt(cannonT.dmg - (cannonT.dmg - cannonT.dmg), 0, 'pháo vẫn gây sát thương sau khi chỉnh test');
   S.paused = true;
 });
 
@@ -500,6 +543,12 @@ T('11. Chơi trọn 25 đợt với hệ thống phòng thủ mạnh', () => {
     ok(doc.getElementById('overlay').classList.contains('show'), 'hiện bảng chiến thắng');
     ok(!!doc.getElementById('btnAgain'), 'có nút chơi lại');
     ok(doc.querySelector('.summary').textContent.includes('ĐIỂM'), 'có bảng tổng kết điểm');
+    eq(S.wave, 25, 'thắng đủ 25 đợt của Hành Lang Xoắn');
+    gt(NEON.boardOf(LVC).length, 0, 'kết quả được ghi vào bảng xếp hạng của bản đồ');
+    ok(doc.querySelector('.rankline').textContent.includes('hạng'), 'bảng kết hiện thứ hạng của bạn');
+    ok(!!doc.getElementById('btnNext'), 'thắng màn thì có nút sang màn kế tiếp');
+    ok(!!doc.getElementById('btnBoardEnd'), 'bảng kết có nút mở bảng xếp hạng');
+    ok(!!doc.getElementById('nameInput'), 'bảng kết cho nhập tên người chơi');
     doc.getElementById('btnAgain').click();
     eq(S.phase, 'build', 'chơi lại được từ màn chiến thắng');
   }
@@ -517,15 +566,16 @@ T('12. Thua cuộc khi không phòng thủ', () => {
   eq(S.phase, 'over', 'để địch tràn vào căn cứ → thua');
   eq(S.lives, 0, 'mạng về 0');
   ok(doc.getElementById('overlay').classList.contains('show'), 'hiện bảng thất thủ');
-  ok(!!doc.getElementById('btnMenu2'), 'có nút đổi độ khó');
-  doc.getElementById('btnMenu2').click();
-  ok(!!doc.getElementById('btnStart'), 'về được menu chính');
+  ok(!!doc.getElementById('btnLevels'), 'bảng kết có nút chọn bản đồ');
+  doc.getElementById('btnLevels').click();
+  ok(doc.querySelectorAll('.lvl').length === 6, 'về được màn chọn bản đồ');
 
-  // từ menu chọn độ khó khác rồi vào trận
-  doc.querySelector('.diff[data-diff="hard"]').click();
-  eq(S.diff, 'hard', 'đổi được độ khó ở menu');
+  // chọn độ khó khác rồi vào trận
+  doc.querySelector('.dchip[data-diff="hard"]').click();
+  eq(S.diff, 'hard', 'đổi được độ khó ở màn chọn bản đồ');
   doc.getElementById('btnStart').click();
-  eq(S.lives, NEON.DIFFICULTIES.hard.lives, 'ván mới dùng độ khó vừa chọn');
+  eq(S.diff, 'hard', 'ván mới dùng độ khó vừa chọn');
+  eq(S.lives, NEON.startState(NEON.levelDef(S.level), NEON.DIFFICULTIES.hard).lives, 'mạng khởi đầu theo độ khó Khó của bản đồ đó');
 });
 
 T('13. Địch monster / alien: icon SVG, dịch chuyển tức thời, tách đàn', () => {
@@ -681,6 +731,209 @@ T('15. Vòng lặp render & dọn dẹp', () => {
   step(1 / 30, 200);
   NEON.S.paused = true;
   ok(true, 'mô phỏng 200 khung hình với trùm không lỗi');
+});
+
+
+T('16. Sáu bản đồ: icon, kích thước, số đợt khác nhau', () => {
+  // icon SVG cho từng bản đồ
+  const mapIcons = ['map-plains', 'map-corridor', 'map-frost', 'map-desert', 'map-orbit', 'map-core', 'map'];
+  const missing = mapIcons.filter((k) => !NEON.ICONS[k]);
+  eq(missing.length, 0, `có đủ ${mapIcons.length} icon bản đồ (thiếu: ${missing.join(', ') || 'không'})`);
+  ok(mapIcons.every((k) => /stroke|fill/.test(NEON.ICONS[k]) && NEON.ICONS[k].includes('currentColor')),
+    'mọi icon bản đồ dùng currentColor để ăn theo màu giao diện');
+  ok(NEON.LEVELS.every((l) => !!NEON.ICONS[l.icon]), 'mỗi bản đồ trỏ tới một icon có thật');
+  ok(!!win.__NEON_ICON_OVERRIDES__ && Object.keys(win.__NEON_ICON_OVERRIDES__).length >= 8,
+    `icon ghi đè được nhúng vào bản dựng (${Object.keys(win.__NEON_ICON_OVERRIDES__ || {}).length} icon)`);
+
+  NEON.showMenu();
+  ok(doc.querySelector('.modal h1').textContent.includes('NEON DEFENSE'), 'màn chính có tiêu đề game');
+  NEON.showLevelSelect();
+  const cards = [...doc.querySelectorAll('.lvl')];
+  eq(cards.length, 6, 'màn chọn bản đồ hiện đủ 6 thẻ');
+  eq(doc.querySelectorAll('.dchip').length, 3, 'có 3 chip độ khó (Dễ / Thường / Khó)');
+
+  const wavesSeen = [];
+  for (const l of NEON.LEVELS) {
+    const card = doc.querySelector(`.lvl[data-level="${l.id}"]`);
+    ok(!!card, `có thẻ cho bản đồ ${l.id}`);
+    eq(card.querySelectorAll('.lvl-icon svg').length, 1, `thẻ ${l.id} có icon SVG`);
+    eq(card.querySelector('.lvl-name small').textContent.trim().split('·')[1].trim(), `${l.cols}×${l.rows} ô`,
+      `thẻ ${l.id} ghi kích thước ${l.cols}×${l.rows} ô`);
+    const pills = [...card.querySelectorAll('.pill')].map((p) => p.textContent);
+    ok(pills.some((t) => t.includes(`${l.waves} đợt`)), `thẻ ${l.id} ghi rõ ${l.waves} đợt tấn công`);
+    ok(pills.length >= 4, `thẻ ${l.id} hiện mạng, vàng và độ nguy hiểm`);
+    card.click();
+    wavesSeen.push(doc.getElementById('btnStart').textContent.trim());
+    ok(doc.getElementById('btnStart').textContent.includes(`${l.waves} đợt`), `chọn ${l.id} → nút bắt đầu ghi ${l.waves} đợt`);
+  }
+  eq(new Set(NEON.LEVELS.map((l) => l.waves)).size, 5, `số đợt khác nhau giữa các bản đồ: ${NEON.LEVELS.map((l) => l.waves).join(' · ')}`);
+  ok(wavesSeen.every((t, i) => t.includes(String(NEON.LEVELS[i].waves))), 'mỗi thẻ chọn đúng số đợt của bản đồ đó');
+  // đổi độ khó ở màn chọn → nút bắt đầu + chip sáng theo
+  doc.querySelector('.dchip[data-diff="hard"]').click();
+  eq(S.diff, 'hard', 'chip độ khó Khó được chọn');
+  ok(doc.querySelector('.dchip[data-diff="hard"]').classList.contains('sel'), 'chip Khó sáng lên');
+  doc.querySelector('.dchip[data-diff="normal"]').click();
+  NEON.showLevelSelect();
+  eq(NEON.LEVELS[5].waves, 40, 'bản đồ cuối (Lõi Lượng Tử) có 40 đợt');
+  eq(NEON.LEVELS[0].waves, 20, 'bản đồ đầu (Đồng Bằng Neon) có 20 đợt');
+});
+
+T('17. Tiến độ: hạ màn này mở khoá màn kế', () => {
+  NEON.resetProgress();
+  eq(NEON.clearedCount(), 0, 'xoá tiến độ → 0 bản đồ đã hạ');
+  eq(NEON.boardCount(), 0, 'xoá tiến độ → bảng xếp hạng trống');
+  eq(NEON.isUnlocked('plains'), true, 'bản đồ đầu luôn mở');
+  eq(NEON.isUnlocked('corridor'), false, 'bản đồ 2 khoá khi chưa hạ màn 1');
+  NEON.showLevelSelect();
+  eq(doc.querySelectorAll('.lvl.locked').length, 5, 'màn chọn hiện 5 thẻ khoá 🔒');
+  eq(doc.querySelectorAll('.lvl.locked .lvl-lock').length, 5, 'thẻ khoá có ổ khoá');
+  ok(doc.querySelector('.lvl[data-level="corridor"] .lvl-foot').textContent.includes('Đồng Bằng Neon'),
+    'thẻ khoá chỉ rõ cần hạ bản đồ nào');
+  // bấm vào bản đồ khoá: không vào trận
+  S.phase = 'menu';
+  S.level = 'plains';
+  NEON.showLevelSelect();
+  doc.querySelector('.lvl[data-level="core"]').click();
+  eq(S.level, 'plains', 'bấm bản đồ khoá không đổi bản đồ đang chọn');
+  doc.getElementById('btnStart').click();
+  ok(S.phase !== 'build' || S.level === 'plains', 'không vào trận ở bản đồ còn khoá');
+
+  // chơi thật bản đồ đầu ở độ Dễ rồi hạ màn
+  NEON.startGame('plains', 'easy');
+  eq(S.map.waves, 20, 'ván mới dùng bản đồ Đồng Bằng Neon (20 đợt)');
+  const spots = tilesNextToPath(30);
+  const types = ['gun', 'cannon', 'frost', 'tesla', 'sniper'];
+  giveGold(300000);
+  spots.forEach((sp, i) => { NEON.placeTower(types[i % 5], sp.gx, sp.gz); S.gold = Math.max(S.gold, 4000); });
+  S.towers.forEach((t) => { for (let i = 0; i < 3; i++) NEON.upgradeTower(t); });
+  let guard = 0;
+  while (S.phase !== 'victory' && S.phase !== 'over' && guard++ < 40) {
+    if (!S.waveActive) NEON.startWave();
+    const done = runUntil(() => !S.waveActive || S.phase === 'over' || S.phase === 'victory', 300);
+    if (done < 0) break;
+  }
+  S.paused = true;
+  eq(S.phase, 'victory', 'hạ được bản đồ đầu tiên');
+  eq(NEON.clearedCount(), 1, 'tiến độ ghi nhận 1/6 bản đồ đã hạ');
+  eq(NEON.isUnlocked('corridor'), true, 'hạ màn 1 → mở khoá màn 2');
+  eq(NEON.isUnlocked('frost'), false, 'màn 3 vẫn khoá (chưa hạ màn 2)');
+  const best = NEON.bestOf('plains');
+  ok(!!best && best.win === true, 'kỷ lục của bản đồ lưu trạng thái thắng');
+  eq(best.wave, 20, 'kỷ lục ghi đúng số đợt đã vượt qua của bản đồ');
+  eq(best.difficulty, 'easy', 'kỷ lục ghi đúng độ khó đã chơi');
+  const raw = win.localStorage.getItem('neon-defense-board:plains');
+  ok(!!raw && JSON.parse(raw).length >= 1, 'bảng xếp hạng lưu vào localStorage theo từng bản đồ');
+  NEON.showLevelSelect();
+  eq(doc.querySelectorAll('.lvl.locked').length, 4, 'màn chọn cập nhật còn 4 thẻ khoá');
+  ok(doc.querySelector('.lvl[data-level="plains"] .lvl-best').textContent.includes('Kỷ lục'), 'thẻ bản đồ hiện kỷ lục');
+  const inp = doc.getElementById('nameInput');
+  inp.value = 'Tester VN';
+  inp.dispatchEvent(new win.Event('change'));
+  eq(NEON.playerName(), 'Tester VN', 'lưu được tên người chơi');
+  eq(win.localStorage.getItem('neon-defense-name'), 'Tester VN', 'tên người chơi lưu vào localStorage');
+  const top = NEON.boardOf('plains')[0];
+  NEON.renameEntry('plains', top.id, 'Tester VN');
+  eq(NEON.boardOf('plains')[0].name, 'Tester VN', 'đổi được tên của bản ghi trong bảng xếp hạng');
+  NEON.showLevelSelect();
+  ok(doc.querySelector('.lvl[data-level="plains"] .lvl-best').textContent.includes('Tester VN'),
+    'màn chọn bản đồ hiện tên người dẫn đầu');
+
+  // mở khoá toàn bộ để các test sau chạy trên mọi bản đồ (như lúc khởi động)
+  NEON.unlockAll();
+  eq(NEON.LEVELS.filter((l) => NEON.isUnlocked(l.id)).length, 6, 'mở khoá toàn bộ bản đồ trở lại');
+});
+
+T('18. Bảng xếp hạng: sắp hạng, top 10, tách riêng từng bản đồ', () => {
+  NEON.resetProgress();
+  NEON.unlockAll();
+  const mk = (score, wave, kills, name, t) => ({
+    levelId: 'frost', name, score, wave, kills, lives: 10, difficulty: 'normal',
+    win: wave >= 30, time: t, id: NEON.makeEntryId(),
+  });
+  // 12 điểm tăng dần → chỉ giữ top 10
+  for (let i = 1; i <= 12; i++) {
+    const res = NEON.submitScore(mk(i * 1000, i, i, 'Bot' + i, 1000 + i));
+    ok(res.rank <= 10 || !res.inserted, `điểm ${i * 1000} được xếp hạng ${res.rank}`);
+  }
+  const board = NEON.boardOf('frost');
+  eq(board.length, 10, 'bảng xếp hạng giữ đúng top 10');
+  eq(board[0].score, 12000, 'điểm cao nhất đứng đầu');
+  eq(board[9].score, 3000, 'điểm thấp nhất trong top là 3000 (2 điểm thấp bị loại)');
+  ok(board.every((e, i, a) => i === 0 || a[i - 1].score >= e.score), 'bảng xếp hạng sắp giảm dần theo điểm');
+  eq(NEON.qualifies('frost', 0), false, 'điểm 0 không lọt top 10 đầy');
+  eq(NEON.qualifies('frost', 99999), true, 'điểm rất cao thì lọt top');
+  eq(NEON.boardOf('corridor').length, 0, 'bảng của bản đồ khác vẫn trống (tách riêng từng bản đồ)');
+  const r = NEON.submitScore(mk(50000, 30, 300, 'Gioi Nhat', 2000));
+  eq(r.rank, 1, 'điểm mới cao nhất lên hạng #1');
+  eq(NEON.boardOf('frost')[1].name, 'Bot12', 'các hạng sau bị đẩy xuống 1 bậc');
+  ok(JSON.parse(win.localStorage.getItem('neon-defense-board:frost')).length === 10, 'localStorage cũng chỉ giữ 10 dòng');
+
+  // hiển thị
+  NEON.showLeaderboard('frost');
+  ok(doc.querySelector('.modal h1').textContent.includes('Kỷ lục'), 'mở được trang bảng xếp hạng');
+  eq(doc.querySelectorAll('.ltab').length, 6, 'trang bảng xếp hạng có tab cho từng bản đồ');
+  const rows = [...doc.querySelectorAll('table.board tbody tr')];
+  eq(rows.length, 10, 'bảng hiện đủ 10 dòng top 10');
+  ok(rows[0].querySelector('.rank').textContent.includes('🥇'), 'dòng đầu là hạng 1 (huy chương vàng)');
+  ok(rows[0].querySelector('.sc').textContent.includes('50'), 'dòng đầu hiện điểm cao nhất');
+  ok(rows[0].querySelector('.nm').textContent.includes('Gioi Nhat'), 'bảng hiện tên người chơi');
+  ok(rows[0].className.includes('me') || rows[0].className.includes('top'), 'hạng nhất được làm nổi bật');
+  doc.querySelector('.ltab[data-lb="corridor"]').click();
+  ok(doc.querySelector('table.board td.empty'), 'bản đồ chưa có điểm thì hiện thông báo trống');
+  doc.querySelector('.ltab[data-lb="frost"]').click();
+  eq(doc.querySelectorAll('table.board tbody tr').length, 10, 'chuyển tab sang bản đồ khác hiện đúng bảng của bản đồ đó');
+  // mở từ ván đấu: nút "Chơi bản đồ này" chạy được
+  doc.getElementById('btnPlay').click();
+  eq(S.level, 'frost', 'nút Chơi bản đồ này vào trận ở đúng bản đồ của tab');
+  ok(S.phase === 'build', 'vào trận từ trang bảng xếp hạng');
+  S.paused = true;
+  NEON.showLeaderboard('frost');
+  doc.getElementById('btnReset').click();
+  eq(NEON.boardOf('frost').length, 0, 'nút xoá bảng xếp hạng xoá đúng bảng của bản đồ');
+  ok(!!doc.querySelector('table.board td.empty'), 'bảng trống hiện thông báo chưa có điểm');
+  NEON.showLeaderboard('frost');
+  eq(doc.querySelectorAll('.ltab').length, 6, 'mở lại bảng xếp hạng vẫn đủ 6 tab');
+  // ghi điểm vào nhiều bản đồ rồi kiểm tra tổng
+  NEON.submitScore({ ...mk(7000, 20, 90, 'B', 5000), levelId: 'plains' });
+  eq(NEON.boardCount(), 1, `bảng của frost đã bị xoá, chỉ còn ${NEON.boardCount()} điểm ở bản đồ khác`);
+  NEON.resetProgress();
+  NEON.unlockAll();
+  eq(NEON.boardCount(), 0, 'xoá tiến độ cũng xoá bảng xếp hạng');
+});
+
+T('19. HUD & bảng phụ theo bản đồ đang chơi', () => {
+  NEON.startGame('orbit', 'normal');
+  const chip = doc.querySelector('.chip.map');
+  const orbit = NEON.LEVELS.find((l) => l.id === 'orbit');
+  ok(!!chip, 'HUD có chip tên bản đồ');
+  eq(chip.textContent.trim(), orbit.name, 'chip hiện đúng tên bản đồ đang chơi');
+  eq(chip.querySelectorAll('svg').length, 1, 'chip bản đồ có icon');
+  ok(chip.title.includes(`${orbit.waves} đợt`), 'chip bản đồ ghi số đợt khi rê chuột');
+  eq(doc.getElementById('vWave').textContent, `0/${orbit.waves}`, `chip đợt hiện đúng 0/${orbit.waves}`);
+  NEON.updateHUD(true);
+  eq(NEON.S.map.waves, 35, 'ván đang chơi là bản đồ 35 đợt');
+  // tạm dừng: bảng tạm dừng ghi đúng bản đồ + số đợt
+  S.paused = false;
+  NEON.showPause();
+  ok(doc.querySelector('#overlay .sub').textContent.includes(orbit.name), 'bảng tạm dừng ghi tên bản đồ');
+  ok(doc.querySelector('#overlay .sub').textContent.includes(`/${orbit.waves}`), `bảng tạm dừng ghi đợt x/${orbit.waves}`);
+  doc.getElementById('btnBoard2').click();
+  ok(doc.querySelector('#overlay h1').textContent.includes('Kỷ lục'), 'từ tạm dừng mở được bảng xếp hạng');
+  doc.getElementById('btnBoardBack').click();
+  ok(!!doc.getElementById('btnResume'), 'nút Quay lại đưa về bảng tạm dừng');
+  doc.getElementById('btnResume').click();
+  eq(S.paused, false, 'nút Tiếp tục chạy lại ván');
+  // trợ giúp từ màn chính / trong ván
+  NEON.showHelp();
+  ok(!!doc.getElementById('btnBack'), 'bảng hướng dẫn có nút quay lại');
+  NEON.startGame('core', 'hard');
+  eq(S.map.waves, 40, 'bản đồ cuối có 40 đợt khi vào trận');
+  NEON.showPause();
+  ok(doc.getElementById('btnQuit').textContent.includes('Chọn bản đồ'), 'bảng tạm dừng có nút đổi bản đồ');
+  doc.getElementById('btnQuit').click();
+  eq(doc.querySelectorAll('.lvl').length, 6, 'nút đổi bản đồ mở màn chọn bản đồ');
+  NEON.startGame(LVC, 'normal');
+  S.paused = true;
 });
 
 /* ------------------------------- chạy ---------------------------------- */

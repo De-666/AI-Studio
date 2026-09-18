@@ -147,7 +147,11 @@ const Sound = {
 
 /* ----------------------------- scene ----------------------------------- */
 let renderer = null, scene = null, camera = null;
-const world = new THREE.Group();
+const world = new THREE.Group();            // chứa tất cả
+const staticWorld = new THREE.Group();      // phần tĩnh theo bản đồ (địa hình, đường, trang trí, căn cứ, cổng)
+staticWorld.name = 'static';
+world.add(staticWorld);
+const ownedGeos = [];                       // geometry tạo riêng cho từng bản đồ (cần dispose khi dựng lại)
 const FX = [];              // hiệu ứng có vòng đời
 const animGroups = [];      // nhóm mesh cần animate (cổng, căn cứ, trang trí)
 let baseObj = null, portalObj = null, basePos = new THREE.Vector3();
@@ -168,14 +172,60 @@ function initRenderer() {
   camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 420);
   scene.add(world);
 
-  pathMap = pathTiles();     // dữ liệu đường đi dùng chung cho nền, làn đường và luật xây
   buildLights();
   buildStars();
+  buildStaticWorld(S.level);
+}
+
+/* ------------------- thế giới tĩnh theo từng bản đồ -------------------- */
+/** Dựng (hoặc dựng lại) toàn bộ phần tĩnh của bản đồ `mapId`. */
+function buildStaticWorld(mapId) {
+  clearStaticWorld();
+  setMap(mapId);
+  pathMap = pathTiles();          // dữ liệu đường đi dùng chung cho nền, làn đường và luật xây
+  markNoBuild(activeMap());
   buildGround();
   buildPath();
   buildDecor();
   buildBase();
   buildPortal();
+  buildPathData();                // đường đi cho địch (độ dài, điểm bẻ lái, đường bay)
+}
+
+/** Xoá sạch thế giới tĩnh cũ (giải phóng material & geometry riêng của bản đồ cũ). */
+function clearStaticWorld() {
+  for (let i = staticWorld.children.length - 1; i >= 0; i--) {
+    const child = staticWorld.children[i];
+    staticWorld.remove(child);
+    child.traverse((o) => {
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => m && m.dispose && m.dispose());
+      }
+      if (o.geometry && ownedGeos.includes(o.geometry)) {
+        o.geometry.dispose();
+        ownedGeos.splice(ownedGeos.indexOf(o.geometry), 1);
+      }
+    });
+  }
+  blocked.clear();
+  animGroups.length = 0;
+}
+
+/** Ô đất cấm xây quanh cổng vào và căn cứ (khác cho từng bản đồ). */
+function markNoBuild(map) {
+  noBuild.clear();
+  const [, pz] = map.path[0];
+  for (let gx = 0; gx <= 1; gx++) for (let gz = pz - 2; gz <= pz + 2; gz++) if (inGrid(gx, gz)) noBuild.add(key(gx, gz));
+  const [, bz] = map.path[map.path.length - 1];
+  for (let gx = GRID.COLS - 3; gx < GRID.COLS; gx++) for (let gz = bz - 2; gz <= bz + 2; gz++) if (inGrid(gx, gz)) noBuild.add(key(gx, gz));
+}
+
+/** Canh camera vừa tầm bản đồ hiện hành. */
+function fitCamera(reset) {
+  if (reset) { CAM.target.set(0, 0, 0); CAM.theta = -0.7; CAM.phi = 0.82; }
+  CAM.dist = clamp(Math.max(GRID.W, GRID.D) * 1.02, 26, 62);
+  clampTarget();
 }
 
 function buildLights() {
@@ -214,29 +264,33 @@ function buildStars() {
   const p = new THREE.Points(g, m); p.frustumCulled = false; world.add(p);
 }
 
-const blocked = new Set();      // ô không thể xây
+const blocked = new Set();      // ô không thể xây (đường đi + vật trang trí)
+const noBuild = new Set();      // ô cấm xây quanh cổng vào / căn cứ
 const towerAt = new Map();      // 'gx,gz' -> tower
 let pathMap = null;
 
 function buildGround() {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(GRID.W + 46, GRID.D + 46), smat(0x080d16, { rough: 1, metal: 0, flat: false }));
+  const groundGeo = new THREE.PlaneGeometry(GRID.W + 46, GRID.D + 46);
+  ownedGeos.push(groundGeo);
+  const ground = new THREE.Mesh(groundGeo, smat(0x080d16, { rough: 1, metal: 0, flat: false }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.26; ground.receiveShadow = true;
-  world.add(ground);
+  staticWorld.add(ground);
 
   // vành sáng quanh bản đồ
   const rim = new THREE.Mesh(new THREE.TorusGeometry(1, 0.035, 6, 4), glowMat(0x1f7fbf, 0.5));
   rim.scale.set(GRID.W / 2 + 4, GRID.D / 2 + 4, 1);
   rim.rotation.x = -Math.PI / 2; rim.rotation.z = Math.PI / 4; rim.position.y = -0.22;
-  world.add(rim);
+  staticWorld.add(rim);
 
   const tileGeo = new THREE.BoxGeometry(TILE * 0.97, 0.24, TILE * 0.97);
+  ownedGeos.push(tileGeo);
   const tileMat = smat(0xffffff, { rough: 0.95, metal: 0.04 });
-  const tiles = new THREE.InstancedMesh(tileGeo, tileMat, COLS * ROWS);
+  const tiles = new THREE.InstancedMesh(tileGeo, tileMat, GRID.COLS * GRID.ROWS);
   tiles.receiveShadow = true;
-  const rng = makeRNG(2024);
+  const rng = makeRNG(activeMap().seed);
   let i = 0;
-  for (let gz = 0; gz < ROWS; gz++) {
-    for (let gx = 0; gx < COLS; gx++) {
+  for (let gz = 0; gz < GRID.ROWS; gz++) {
+    for (let gx = 0; gx < GRID.COLS; gx++) {
       iPlace(tiles, i, worldX(gx), -0.12, worldZ(gz));
       const k = key(gx, gz);
       if (pathMap.has(k)) { _c1.setHex(0x2c4166).offsetHSL(0, 0, rng() * 0.035 - 0.012); blocked.add(k); }
@@ -246,17 +300,18 @@ function buildGround() {
   }
   tiles.instanceMatrix.needsUpdate = true;
   if (tiles.instanceColor) tiles.instanceColor.needsUpdate = true;
-  world.add(tiles);
+  staticWorld.add(tiles);
 }
 
 function buildPath() {
   const tiles = [...pathMap.values()];
   const laneMat = smat(0x0a2540, { emissive: 0x27c8ff, ei: 1.5, rough: 0.4, metal: 0.25 });
   const laneGeo = new THREE.BoxGeometry(1.72, 0.06, 0.5);
+  ownedGeos.push(laneGeo);
   const lanes = new THREE.InstancedMesh(laneGeo, laneMat, tiles.length);
   tiles.forEach((t, i) => iPlace(lanes, i, worldX(t.gx), 0.02, worldZ(t.gz), t.dx !== 0 ? 0 : Math.PI / 2));
   lanes.instanceMatrix.needsUpdate = true;
-  world.add(lanes);
+  staticWorld.add(lanes);
   animGroups.push({ obj: lanes, kind: 'lane' });
 
   // viền neon hai bên đường
@@ -270,14 +325,19 @@ function buildPath() {
     }
   }
   const sGeo = new THREE.BoxGeometry(0.13, 0.14, TILE * 0.96);
+  ownedGeos.push(sGeo);
   const sm = new THREE.InstancedMesh(sGeo, glowMat(0x37dcff, 0.72), strips.length);
   strips.forEach((s, i) => iPlace(sm, i, s.x, 0.03, s.z, s.ry));
   sm.instanceMatrix.needsUpdate = true;
-  world.add(sm);
+  staticWorld.add(sm);
 }
 
 function buildDecor() {
-  const rng = makeRNG(7771);
+  const rng = makeRNG(activeMap().seed + 17);
+  // mọi ngẫu nhiên trang trí đều lấy từ seed của bản đồ → bản đồ trông y hệt nhau ở mọi ván
+  const drnd = (a, b) => a + rng() * (b - a);
+  const dpick = (arr) => arr[Math.floor(rng() * arr.length)];
+  const drndInt = (a, b) => a + Math.floor(rng() * (b - a + 1));
   const rockMat = smat(0x2a3346, { rough: 0.95, metal: 0.1 });
   const rockMat2 = smat(0x3d4964, { rough: 0.9, metal: 0.15 });
   const plantMat = smat(0x14352c, { rough: 0.9, metal: 0.05, emissive: 0x0d5c46, ei: 0.7 });
@@ -290,45 +350,44 @@ function buildDecor() {
   let hero = 0;
 
   /* ---- rải trang trí trên các ô trống ---- */
-  for (let gz = 0; gz < ROWS; gz++) {
-    for (let gx = 0; gx < COLS; gx++) {
+  for (let gz = 0; gz < GRID.ROWS; gz++) {
+    for (let gx = 0; gx < GRID.COLS; gx++) {
       if (pathMap.has(key(gx, gz))) continue;
-      if (gx < 3 && Math.abs(gz - 3) <= 2) continue;              // chừa chỗ cho cổng vào
-      if (gx > COLS - 5 && Math.abs(gz - 3) <= 2) continue;       // chừa chỗ cho căn cứ
+      if (noBuild.has(key(gx, gz))) continue;                     // chừa chỗ cho cổng vào / căn cứ
       const r = rng();
       if (r > 0.24) continue;
       const x = worldX(gx), z = worldZ(gz);
       blocked.add(key(gx, gz));
 
       if (r < 0.09) {                                             // cụm đá
-        const n = rndInt(2, 4);
+        const n = drndInt(2, 4);
         for (let j = 0; j < n; j++) {
-          const o = { x: x + rnd(-0.6, 0.6), z: z + rnd(-0.6, 0.6), s: rnd(0.34, 0.8), ry: rng() * 6.28 };
+          const o = { x: x + drnd(-0.6, 0.6), z: z + drnd(-0.6, 0.6), s: drnd(0.34, 0.8), ry: rng() * 6.28 };
           (rng() < 0.5 ? rocks : rocks2).push(o);
         }
       } else if (r < 0.16) {                                      // mỏ tinh thể phát sáng
-        const kind = rndInt(0, cryColors.length - 1);
-        const s = rnd(0.6, 1.1);
+        const kind = drndInt(0, cryColors.length - 1);
+        const s = drnd(0.6, 1.1);
         crys[kind].push({ x, z, s, ry: rng() * 6.28 });
         discs[kind].push({ x, z, s: s * 1.9 });
         if (rng() < 0.22 && hero < 6) {
           hero++;
           const g = new THREE.Group(); g.position.set(x, 0, z);
-          const h = rnd(0.9, 1.5);
+          const h = drnd(0.9, 1.5);
           g.add(part(GEO.oct, cryMats[kind], { s: [0.3, h, 0.3], p: [0, h * 0.8, 0], shadow: false }));
-          for (let j = 0; j < 2; j++) g.add(part(GEO.oct, cryMats[kind], { s: [0.15, rnd(0.3, 0.5), 0.15], p: [rnd(-0.45, 0.45), 0.35, rnd(-0.45, 0.45)], r: [0.25, rng() * 3, -0.3], shadow: false }));
-          world.add(g);
+          for (let j = 0; j < 2; j++) g.add(part(GEO.oct, cryMats[kind], { s: [0.15, drnd(0.3, 0.5), 0.15], p: [drnd(-0.45, 0.45), 0.35, drnd(-0.45, 0.45)], r: [0.25, rng() * 3, -0.3], shadow: false }));
+          staticWorld.add(g);
           animGroups.push({ obj: g, kind: 'crystal', ph: rng() * 6.28 });
         }
       } else if (r < 0.21) {                                      // bụi cây
-        for (let j = 0, n = rndInt(2, 4); j < n; j++) {
-          const px = x + rnd(-0.6, 0.6), pz = z + rnd(-0.6, 0.6), h = rnd(0.6, 1.3);
+        for (let j = 0, n = drndInt(2, 4); j < n; j++) {
+          const px = x + drnd(-0.6, 0.6), pz = z + drnd(-0.6, 0.6), h = drnd(0.6, 1.3);
           trunks.push({ x: px, z: pz, h });
           plants.push({ x: px, z: pz, h, ry: rng() * 6.28 });
         }
       } else {                                                    // cột đèn neon ven đấu trường
-        const kind = rndInt(0, cryColors.length - 1);
-        posts.push({ x, z, h: rnd(1.9, 2.5), ry: rng() * 6.28 });
+        const kind = drndInt(0, cryColors.length - 1);
+        posts.push({ x, z, h: drnd(1.9, 2.5), ry: rng() * 6.28 });
         discs[kind].push({ x, z, s: 1.5 });
       }
     }
@@ -339,12 +398,12 @@ function buildDecor() {
   for (let i = 0; i < 96; i++) {
     const a = (i / 96) * Math.PI * 2 + rng() * 0.05;
     const rx = GRID.W / 2 + 5 + rng() * 12, rz = GRID.D / 2 + 5 + rng() * 12;
-    ringRocks.push({ x: Math.cos(a) * rx, z: Math.sin(a) * rz, s: rnd(0.9, 3.1), ry: rng() * 6.28 });
+    ringRocks.push({ x: Math.cos(a) * rx, z: Math.sin(a) * rz, s: drnd(0.9, 3.1), ry: rng() * 6.28 });
   }
   for (let i = 0; i < 16; i++) {
     const a = (i / 16) * Math.PI * 2 + rng() * 0.3;
     const rx = GRID.W / 2 + 16 + rng() * 16, rz = GRID.D / 2 + 16 + rng() * 16;
-    spires.push({ x: Math.cos(a) * rx, z: Math.sin(a) * rz, h: rnd(3, 8), s: rnd(0.4, 0.9), c: cryColors[i % cryColors.length] });
+    spires.push({ x: Math.cos(a) * rx, z: Math.sin(a) * rz, h: drnd(3, 8), s: drnd(0.4, 0.9), c: cryColors[i % cryColors.length] });
   }
 
   /* ---- gộp thành các InstancedMesh (nhẹ draw call) ---- */
@@ -353,12 +412,12 @@ function buildDecor() {
     const im = new THREE.InstancedMesh(geo, mat, list.length);
     list.forEach((o, i) => place(im, i, o));
     im.instanceMatrix.needsUpdate = true;
-    world.add(im);
+    staticWorld.add(im);
     return im;
   };
-  mk(GEO.ico, rockMat, rocks, (im, i, o) => iPlace(im, i, o.x, o.s * 0.34, o.z, o.ry, o.s * 1.2, o.s * 0.9, o.s * 1.1, rnd(-0.12, 0.12)));
-  mk(GEO.ico, rockMat2, rocks2, (im, i, o) => iPlace(im, i, o.x, o.s * 0.3, o.z, o.ry, o.s * 1.1, o.s * 0.8, o.s, rnd(-0.12, 0.12)));
-  mk(GEO.ico, rockMat2, ringRocks, (im, i, o) => iPlace(im, i, o.x, o.s * 0.28, o.z, o.ry, o.s * 1.35, o.s, o.s * 1.25, rnd(-0.15, 0.15)));
+  mk(GEO.ico, rockMat, rocks, (im, i, o) => iPlace(im, i, o.x, o.s * 0.34, o.z, o.ry, o.s * 1.2, o.s * 0.9, o.s * 1.1, drnd(-0.12, 0.12)));
+  mk(GEO.ico, rockMat2, rocks2, (im, i, o) => iPlace(im, i, o.x, o.s * 0.3, o.z, o.ry, o.s * 1.1, o.s * 0.8, o.s, drnd(-0.12, 0.12)));
+  mk(GEO.ico, rockMat2, ringRocks, (im, i, o) => iPlace(im, i, o.x, o.s * 0.28, o.z, o.ry, o.s * 1.35, o.s, o.s * 1.25, drnd(-0.15, 0.15)));
   mk(GEO.cyl6, plantMat, trunks, (im, i, o) => iPlace(im, i, o.x, o.h * 0.22, o.z, 0, 0.07, o.h * 0.45, 0.07));
   mk(GEO.coneLo, plantMat, plants, (im, i, o) => iPlace(im, i, o.x, o.h * 0.68, o.z, o.ry, o.h * 0.5, o.h, o.h * 0.5));
   mk(GEO.cylLo, postMat, posts, (im, i, o) => iPlace(im, i, o.x, o.h * 0.5, o.z, o.ry, 0.075, o.h, 0.075));
@@ -373,7 +432,7 @@ function buildDecor() {
     const m = smat(0x101a2c, { emissive: sp.c, ei: 0.9, rough: 0.4, metal: 0.3 });
     g.add(part(GEO.cone, m, { s: [sp.s, sp.h, sp.s], p: [0, sp.h * 0.5, 0], shadow: false }));
     g.add(part(GEO.oct, glowMat(sp.c, 0.55), { s: [sp.s * 0.4, sp.s * 0.7, sp.s * 0.4], p: [0, sp.h + sp.s * 0.3, 0], shadow: false }));
-    world.add(g);
+    staticWorld.add(g);
     animGroups.push({ obj: g, kind: 'crystal', ph: rng() * 6.28 });
   }
 }
@@ -382,7 +441,7 @@ function buildBase() {
   const pts = pathWorldPoints();
   const end = pts[pts.length - 1];
   basePos.set(end.x - 1.1, 0, end.z);
-  const g = new THREE.Group(); g.position.copy(basePos); world.add(g);
+  const g = new THREE.Group(); g.position.copy(basePos); staticWorld.add(g);
 
   const shell = smat(0x1d2739, { metal: 0.65, rough: 0.42 });
   const accent = smat(0x0b3348, { emissive: 0x35e0ff, ei: 1.5, metal: 0.5, rough: 0.3 });
@@ -407,7 +466,7 @@ function buildBase() {
 function buildPortal() {
   const pts = pathWorldPoints();
   const start = pts[0];
-  const g = new THREE.Group(); g.position.set(start.x - 0.9, 0, start.z); world.add(g);
+  const g = new THREE.Group(); g.position.set(start.x - 0.9, 0, start.z); staticWorld.add(g);
 
   const frame = part(GEO.plate, smat(0x241536, { metal: 0.6, rough: 0.4, emissive: 0x6b1a5c, ei: 0.5 }), { s: [1.9, 0.4, 1.9], p: [0, 0.2, 0] });
   g.add(frame);
@@ -707,13 +766,156 @@ function updateFX(dt) {
 
 /* ---------------------------- trạng thái ------------------------------- */
 const S = {
-  phase: 'menu', speed: 1, diff: 'normal',
+  phase: 'menu', speed: 1, diff: 'normal', level: LEVELS[0].id, map: null,
   gold: 0, lives: 0, wave: 0, score: 0, kills: 0, leaks: 0, built: 0,
   buildTimer: 0, waveTimer: 0, waveData: null, spawnIdx: 0, waveActive: false,
   buildMode: null, selected: null, hover: null,
   enemies: [], towers: [], projectiles: [],
   pathPts: null, airPts: null, pathLen: 0, airLen: 0, sim: 0, best: 0,
 };
+S.map = levelDef(S.level);
+let lastEntryId = null;          // bản ghi vừa ghi vào bảng xếp hạng (để tô sáng)
+
+/* ------------------------------ lưu trữ -------------------------------- */
+const KEYS = {
+  prog: 'neon-defense-progress',
+  name: 'neon-defense-name',
+  board: (id) => 'neon-defense-board:' + id,
+  legacyBest: 'neon-defense-best',       // khoá của bản cũ, chỉ để chuyển dữ liệu
+  legacyName: 'neon-defense-player',
+};
+const PROG = { unlocked: [], cleared: {}, name: '', last: null };
+const LAST_KEY = 'neon-defense-last';
+const BOARD_CACHE = new Map();
+
+function lsGet(k, def) { try { const v = localStorage.getItem(k); return v === null ? def : v; } catch (e) { return def; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* chế độ riêng tư */ } }
+
+function saveProgress() {
+  lsSet(KEYS.prog, JSON.stringify({ unlocked: PROG.unlocked, cleared: PROG.cleared }));
+}
+function loadProgress() {
+  try {
+    const raw = lsGet(KEYS.prog, null);
+    if (raw) {
+      const o = JSON.parse(raw) || {};
+      PROG.unlocked = Array.isArray(o.unlocked) ? o.unlocked.filter((id) => LEVELS.some((l) => l.id === id)) : [];
+      PROG.cleared = o.cleared && typeof o.cleared === 'object' ? o.cleared : {};
+    }
+  } catch (e) { PROG.unlocked = []; PROG.cleared = {}; }
+  PROG.name = String(lsGet(KEYS.name, '') || lsGet(KEYS.legacyName, '') || '').slice(0, 14);
+  const last = lsGet(LAST_KEY, null);
+  if (last && LEVELS.some((l) => l.id === last)) { PROG.last = last; S.level = last; S.map = levelDef(last); }
+  // chuyển điểm cao nhất của bản cũ sang bảng xếp hạng bản đồ mặc định
+  const legacy = Number(lsGet(KEYS.legacyBest, 0) || 0);
+  if (legacy > 0 && !boardOf(LEVELS[1].id).length) {
+    writeBoard(LEVELS[1].id, [{ id: 'legacy', name: PROG.name || 'Người chơi', score: legacy, wave: LEVELS[1].waves, kills: 0, lives: 0, difficulty: 'normal', win: true, time: Date.now() }]);
+  }
+}
+function isUnlocked(levelId) { return levelId === LEVELS[0].id || PROG.unlocked.includes(levelId); }
+/** Ghi nhớ bản đồ vừa chơi để lần sau vào thẳng màn đó. */
+function rememberLevel(levelId) {
+  PROG.last = levelId;
+  lsSet(LAST_KEY, levelId);
+}
+/** Mở khoá toàn bộ bản đồ (dùng cho chế độ tự do / gỡ lỗi / kiểm thử). */
+function unlockAll(save = true) {
+  PROG.unlocked = LEVELS.map((l) => l.id);
+  if (save) saveProgress();
+  return PROG.unlocked.length;
+}
+/** Đổi bản đồ đang hoạt động: cập nhật lưới, đường đi, trang trí, căn cứ, camera.
+ *  Dùng cho màn chọn bản đồ / bảng xếp hạng / API gỡ lỗi. */
+function applyLevelMap(levelId) {
+  const l = setMap(levelId);
+  S.level = l.id; S.map = l;
+  buildStaticWorld(l.id);
+  buildPathData();
+  return l;
+}
+/** Xoá tiến độ + điểm (dùng trong màn cài đặt / kiểm thử). */
+function resetProgress() {
+  PROG.unlocked = [];
+  PROG.cleared = {};
+  PROG.last = null;
+  saveProgress();
+  try { localStorage.removeItem(LAST_KEY); } catch (e) { /* ignore */ }
+  for (const l of LEVELS) clearBoard(l.id);
+}
+function unlockNext(levelId) {
+  const nxt = LEVELS[levelIndex(levelId) + 1];
+  if (!nxt) return null;
+  if (PROG.unlocked.includes(nxt.id)) return null;
+  PROG.unlocked.push(nxt.id);
+  saveProgress();
+  toast(`🔓 Mở khoá bản đồ mới: ${nxt.badge} ${nxt.name}`, 'good');
+  return nxt;
+}
+function bestOf(levelId) { return PROG.cleared[levelId] || null; }
+function recordResult(levelId, diffId, entry) {
+  const cur = PROG.cleared[levelId];
+  const better = !cur || (entry.win && !cur.win) || entry.score > (cur.score || 0);
+  if (better) PROG.cleared[levelId] = { score: entry.score, wave: entry.wave, difficulty: diffId, win: !!entry.win, time: entry.time };
+  saveProgress();
+}
+function clearedCount() { return LEVELS.filter((l) => bestOf(l.id) && bestOf(l.id).win).length; }
+
+/* --------------------------- bảng xếp hạng ----------------------------- */
+function boardOf(levelId) {
+  if (!BOARD_CACHE.has(levelId)) {
+    let arr = [];
+    try {
+      const raw = lsGet(KEYS.board(levelId), null);
+      if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) arr = parsed.filter((e) => e && Number.isFinite(e.score)); }
+    } catch (e) { arr = []; }
+    arr.sort(scoreCompare);
+    BOARD_CACHE.set(levelId, arr.slice(0, 10));
+  }
+  return BOARD_CACHE.get(levelId);
+}
+function writeBoard(levelId, arr) {
+  BOARD_CACHE.set(levelId, arr.slice(0, 10));
+  lsSet(KEYS.board(levelId), JSON.stringify(arr.slice(0, 10)));
+}
+function clearBoard(levelId) {
+  BOARD_CACHE.set(levelId, []);
+  try { localStorage.removeItem(KEYS.board(levelId)); } catch (e) { /* ignore */ }
+}
+function boardCount() { let n = 0; for (const l of LEVELS) n += boardOf(l.id).length; return n; }
+function topScoreAll() {
+  let top = 0;
+  for (const l of LEVELS) { const b = boardOf(l.id); if (b.length) top = Math.max(top, b[0].score); }
+  return top;
+}
+function playerName() { return PROG.name || 'Người chơi'; }
+function setPlayerName(n) { PROG.name = String(n || '').trim().slice(0, 14); lsSet(KEYS.name, PROG.name); }
+/** Ghi điểm vào bảng xếp hạng của bản đồ; trả về { rank, inserted, entry }. */
+function submitScore(data) {
+  const levelId = data.levelId || S.map.id;
+  const rec = {
+    id: data.id || makeEntryId(),
+    name: (data.name || playerName()).slice(0, 14),
+    score: Math.round(data.score),
+    wave: data.wave | 0,
+    kills: data.kills | 0,
+    lives: data.lives | 0,
+    difficulty: data.difficulty || S.diff,
+    win: !!data.win,
+    time: data.time || Date.now(),
+  };
+  const res = insertScore(boardOf(levelId), rec, 10);
+  writeBoard(levelId, res.board);
+  S.best = res.board.length ? res.board[0].score : rec.score;
+  lastEntryId = rec.id;
+  return { rank: res.rank, inserted: res.inserted, entry: rec };
+}
+function renameEntry(levelId, entryId, name) {
+  const clean = String(name || '').trim().slice(0, 14) || 'Người chơi';
+  writeBoard(levelId, boardOf(levelId).map((e) => (e.id === entryId ? { ...e, name: clean } : e)));
+}
+function escapeHtml(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 let nid = 1;
 
 /* ---------------------- chuẩn bị dữ liệu đường đi ---------------------- */
@@ -1046,9 +1248,7 @@ function updateEnemies(dt) {
 function canBuild(gx, gz) {
   if (!inGrid(gx, gz)) return false;
   const k = key(gx, gz);
-  if (blocked.has(k) || towerAt.has(k)) return false;
-  if (gx <= 1 && gz === 3) return false;                   // cổng vào
-  if (gx >= COLS - 3 && gz === 3) return false;            // căn cứ
+  if (blocked.has(k) || towerAt.has(k) || noBuild.has(k)) return false;
   return true;
 }
 
@@ -1363,7 +1563,7 @@ function startWave(auto = false) {
   }
   S.buildTimer = 0;
   Sound.play('wave');
-  toast(`🌊 Đợt ${S.wave}/${TOTAL_WAVES} bắt đầu!`, 'bad');
+  toast(`🌊 Đợt ${S.wave}/${S.map.waves} bắt đầu!`, 'bad');
   updateHUD(); updateWavePanel(); updateCards();
 }
 
@@ -1385,14 +1585,14 @@ function endWave() {
   S.score += 120 + S.wave * 18;
   Sound.play('clear');
   toast(`✅ Thủ thành công đợt ${S.wave}! +${bonus} vàng`, 'good');
-  if (S.wave >= TOTAL_WAVES) { victory(); return; }
+  if (S.wave >= S.map.waves) { victory(); return; }
   S.phase = 'build';
   S.buildTimer = BUILD_TIME;
   updateHUD(); updateWavePanel(); updateCards(); updateInspector();
 }
 
 function updateWaveUi() {
-  const pctTotal = clamp(S.wave / TOTAL_WAVES, 0, 1) * 100;
+  const pctTotal = clamp(S.wave / Math.max(1, S.map.waves), 0, 1) * 100;
   el.wavefill.style.width = pctTotal + '%';
 }
 
@@ -1419,6 +1619,13 @@ const ICONS = {
   tank: `<path d="M12 2.6l7.4 2.8v6.4c0 4.4-3.1 7.7-7.4 9.6-4.3-1.9-7.4-5.2-7.4-9.6V5.4z" fill="currentColor" opacity=".92"/><path d="M12 8.2l1.2 2.4 2.6.3-1.9 1.8.5 2.6-2.4-1.3-2.4 1.3.5-2.6-1.9-1.8 2.6-.3z" fill="#0b1020"/><path d="M4.6 18.8h14.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".6"/>`,
   flyer: `<ellipse cx="12" cy="14" rx="9.2" ry="3.4" fill="currentColor" opacity=".9"/><path d="M8.2 12.8c1-3.6 2.5-5.3 3.8-5.3s2.8 1.7 3.8 5.3z" fill="currentColor" opacity=".6"/><circle cx="6.6" cy="14.2" r="1" fill="#0b1020"/><circle cx="12" cy="15" r="1.2" fill="#0b1020"/><circle cx="17.4" cy="14.2" r="1" fill="#0b1020"/><path d="M6.8 18.6 5.4 21M17.2 18.6 18.6 21" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity=".55"/>`,
   boss: `<path d="M6.2 4.4 3.1 1.5l.4 4.8zM17.8 4.4l3.1-3.1-.4 4.8z" fill="currentColor"/><path d="M12 4.8c4.6 0 7.8 3.2 7.8 7.4 0 3.1-1.5 4.9-2.6 6-.6.6-.9 1.3-.9 2.1v1.9c0 .9-.8 1.7-1.7 1.7H9.4c-.9 0-1.7-.8-1.7-1.7v-1.9c0-.8-.3-1.5-.9-2.1-1.1-1.1-2.6-2.9-2.6-6C4.2 8 7.4 4.8 12 4.8z" fill="currentColor" opacity=".92"/><path d="M8.3 11.6c0-1.1.9-1.9 1.9-1.9s1.9.8 1.9 1.9c0 1.5-1.3 2.7-1.9 2.7s-1.9-1.2-1.9-2.7zM13.8 11.6c0-1.1.9-1.9 1.9-1.9s1.9.8 1.9 1.9c0 1.5-1.3 2.7-1.9 2.7s-1.9-1.2-1.9-2.7z" fill="#0b1020"/>`,
+  'map-plains': `<path d="M1.6 18.4h20.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M4 18.2c1.8-4.6 4.3-6.9 7.5-6.9 3.3 0 5.7 2.3 7.5 6.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="17.6" cy="5.6" r="2.6" fill="currentColor" opacity=".55"/><path d="M2.4 9.4c1.4-2.4 3-3.6 4.8-3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".5"/>`,
+  'map-corridor': `<path d="M2 6.6h9.2v5.4H6.4v5.4h11.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M17.6 6.6h4.4v10.8h-4.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/><circle cx="2" cy="6.6" r="1.8" fill="currentColor"/><path d="M19.4 17.4h3.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M9.6 9.2h1.6M9.6 12h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity=".5"/>`,
+  'map-frost': `<path d="M12 2.6v18.8M4.1 7.2l15.8 9.2M4.1 16.4l15.8-9.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M12 2.6 10.1 4.9M12 2.6l1.9 2.3M12 21.4l-1.9-2.3M12 21.4l1.9-2.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity=".75"/><path d="M2.6 17.4 8 10.8l3.4 4.6 2.6-3.2 5.4 5.2z" fill="currentColor" opacity=".35"/>`,
+  'map-desert': `<circle cx="18.2" cy="6.2" r="3" fill="currentColor" opacity=".6"/><path d="M1.6 17.6h20.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M3.4 17.4c2.6-5.6 5-5.6 7.6 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11.6 17.4c2.8-4.6 5.2-4.6 8 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" opacity=".7"/><path d="M15.6 10.2c1.2-1.4 2.4-1.4 3.6 0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity=".5"/>`,
+  'map-orbit': `<circle cx="12" cy="12" r="5.6" fill="currentColor" opacity=".85"/><ellipse cx="12" cy="12" rx="10.4" ry="4" fill="none" stroke="currentColor" stroke-width="1.5" transform="rotate(-22 12 12)"/><circle cx="20.4" cy="7.6" r="1.5" fill="currentColor"/><circle cx="9.6" cy="10.2" r="1.2" fill="#0b1020" opacity=".5"/><circle cx="14.2" cy="13.6" r="1.8" fill="#0b1020" opacity=".4"/>`,
+  'map-core': `<path d="M12 2.4 20 6.8v9.4L12 20.6 4 16.2V6.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 7 16 9.4v4.6L12 16.4 8 14V9.4z" fill="currentColor" opacity=".9"/><path d="M12 16.4v5.4M12 2.4v4.6" stroke="currentColor" stroke-width="1.3" stroke-opacity=".5"/><circle cx="12" cy="12" r="1.5" fill="#0b1020"/>`,
+  'map': `<path d="M3 6.4l6-2.4 6 2.4 6-2.4v13.6l-6 2.4-6-2.4-6 2.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 4v13.6M15 6.4V20" stroke="currentColor" stroke-width="1.5" stroke-opacity=".65"/><circle cx="12" cy="11.6" r="1.7" fill="currentColor"/>`,
 };
 // Cho phép thay icon bằng file ngoài: đặt ảnh vào game/icons/<key>.svg rồi chạy npm run game:build
 if (window.__NEON_ICON_OVERRIDES__) {
@@ -1442,7 +1649,7 @@ function renderIcons(root) {
     node.classList.add('has-ic');
   });
 }
-let overlayAction = null, overlayShown = false;
+let overlayAction = null, overlayShown = false, overlayPrimary = null, overlaySecondary = null;
 
 function hex(c) { return '#' + c.toString(16).padStart(6, '0'); }
 
@@ -1461,6 +1668,7 @@ function toast(msg, kind = '') {
 
 function buildHud() {
   el.stats.innerHTML = [
+    '<div class="chip map" id="hMap" title="Bản đồ đang chơi"><span class="eic" id="vMapIcon"></span><span id="vMap">—</span></div>',
     '<div class="chip lives" id="hLives"><i>❤️</i><span id="vLives">0</span></div>',
     '<div class="chip gold" id="hGold"><i>🪙</i><span id="vGold">0</span></div>',
     '<div class="chip wave" id="hWave"><i>🌊</i><span id="vWave">0</span></div>',
@@ -1469,6 +1677,7 @@ function buildHud() {
     '<div class="chip" id="hTowers"><i>🏗️</i><span id="vTowers">0</span></div>',
     '<div class="chip" id="hTimer"><i>⏱️</i><span id="vTimer">--</span></div>',
   ].join('');
+  hud.Map = $('hMap'); hud.vMap = $('vMap'); hud.vMapIcon = $('vMapIcon');
   for (const k of ['Lives', 'Gold', 'Wave', 'Score', 'Kills', 'Towers', 'Timer']) {
     hud[k] = $('h' + k); hud['v' + k] = $('v' + k);
   }
@@ -1484,16 +1693,22 @@ function pulse(node) {
 let _lastHud = {};
 function updateHUD(force) {
   const vals = {
-    Lives: S.lives, Gold: Math.floor(S.gold), Wave: S.wave, Score: S.score,
+    Lives: S.lives, Gold: Math.floor(S.gold), Wave: `${S.wave}/${S.map.waves}`, Score: S.score,
     Kills: S.kills, Towers: S.towers.length,
     Timer: S.waveActive ? `${S.spawnIdx}/${S.waveData ? S.waveData.totalCount : 0}` : (S.phase === 'build' ? fmtTime(S.buildTimer) : '--'),
   };
   for (const k in vals) {
     if (!hud['v' + k]) continue;
     if (_lastHud[k] === vals[k] && !force) continue;
-    hud['v' + k].textContent = k === 'Timer' ? vals[k] : fmt(vals[k]);
+    hud['v' + k].textContent = typeof vals[k] === 'string' ? vals[k] : fmt(vals[k]);
     if (k === 'Lives' || k === 'Gold') pulse(hud['h' + k]);
     _lastHud[k] = vals[k];
+  }
+  if (hud.vMap && (_lastHud.Map !== S.map.id || force)) {
+    _lastHud.Map = S.map.id;
+    hud.vMap.textContent = `${S.map.name}`;
+    if (hud.vMapIcon) { hud.vMapIcon.innerHTML = svgIcon(S.map.icon); hud.vMapIcon.classList.add('has-ic'); }
+    if (hud.Map) hud.Map.title = `Bản đồ: ${S.map.name} · ${S.map.waves} đợt · kích thước ${S.map.cols}×${S.map.rows}`;
   }
   if (hud.Lives) hud.Lives.classList.toggle('low', S.lives <= 5);
   updateWaveUi();
@@ -1569,7 +1784,8 @@ function updateInspector(force) {
   } else {
     el.inspector.innerHTML = `
       <h3>🛠️ Bảng điều khiển</h3>
-      <div class="row"><span>Đợt</span><span>${S.wave}/${TOTAL_WAVES}</span></div>
+      <div class="row"><span>Bản đồ</span><span>${S.map.badge} ${S.map.name} (${S.map.waves} đợt)</span></div>
+      <div class="row"><span>Đợt</span><span>${S.wave}/${S.map.waves}</span></div>
       <div class="row"><span>Tháp đang có</span><span>${S.towers.length}</span></div>
       <div class="row"><span>Địch đã hạ</span><span>${S.kills}</span></div>
       <div class="row"><span>Địch lọt lưới</span><span>${S.leaks}</span></div>
@@ -1606,16 +1822,16 @@ function updateWavePanel() {
   }
   if (S.waveActive && S.waveData) {
     const w = S.waveData;
-    html += `<h3>🌊 Đợt ${S.wave}/${TOTAL_WAVES} · <span class="stars">${stars(waveThreat(S.wave, diff))}</span></h3>`;
+    html += `<h3>🌊 Đợt ${S.wave}/${S.map.waves} · <span class="stars">${stars(waveThreat(S.wave, diff, S.map))}</span></h3>`;
     html += `<div class="row"><span>Đã vào trận</span><span id="wSpawn">${S.spawnIdx}/${w.totalCount}</span></div>`;
     html += `<div class="row"><span>Còn sống</span><span id="wAlive">${S.enemies.length}</span></div>`;
     html += `<div class="row"><span>Sát thương cần</span><span>${fmt(w.totalHp)} HP</span></div>`;
     html += '<div class="enemylist" style="margin-top:8px">' + waveSummaryHtml(w, true) + '</div>';
     html += `<button class="btn ghost" id="btnSpeed">${S.speed}× tốc độ (T)</button>`;
   } else {
-    const n = Math.min(TOTAL_WAVES, S.wave + 1);
-    const w = buildWave(n, diff);
-    html += `<h3>🔮 Đợt kế tiếp · ${n}/${TOTAL_WAVES} · <span class="stars">${stars(waveThreat(n, diff))}</span></h3>`;
+    const n = Math.min(S.map.waves, S.wave + 1);
+    const w = buildWave(n, diff, S.map);
+    html += `<h3>🔮 Đợt kế tiếp · ${n}/${S.map.waves} · <span class="stars">${stars(waveThreat(n, diff, S.map))}</span></h3>`;
     html += `<div class="row"><span>Tổng quân</span><span>${w.totalCount}</span></div>`;
     html += '<div class="enemylist">' + waveSummaryHtml(w, false) + '</div>';
     html += `<div class="row"><span>Tự động mở đợt</span><span id="wTime">${Math.ceil(S.buildTimer)}s</span></div>`;
@@ -1675,60 +1891,246 @@ function buildControls() {
 }
 
 /* ------------------------------ overlay -------------------------------- */
-function showOverlay(html, action) {
+/**
+ * Hiện một màn hình overlay.
+ * @param html  nội dung
+ * @param opts  { action, primary, secondary, onRender } — primary: hành động khi
+ *              nhấn Space/Enter, secondary: khi nhấn Escape.
+ */
+function showOverlay(html, opts = {}) {
   el.overlay.innerHTML = html;
   el.overlay.classList.add('show');
-  overlayShown = true; overlayAction = action || null;
+  overlayShown = true;
+  overlayAction = opts.action || null;
+  overlayPrimary = typeof opts.primary === 'function' ? opts.primary : null;
+  overlaySecondary = typeof opts.secondary === 'function' ? opts.secondary : null;
+  renderIcons(el.overlay);
+  if (typeof opts.onRender === 'function') opts.onRender(el.overlay);
 }
 function hideOverlay() {
   el.overlay.classList.remove('show');
   el.overlay.innerHTML = '';
-  overlayShown = false; overlayAction = null;
+  overlayShown = false;
+  overlayAction = null; overlayPrimary = null; overlaySecondary = null;
+}
+/** Chọn nhanh một phần tử trong overlay hiện hành. */
+const ovq = (sel) => el.overlay.querySelector(sel);
+const ovqa = (sel) => [...el.overlay.querySelectorAll(sel)];
+
+function diffChipsHtml(activeId) {
+  return Object.values(DIFFICULTIES).map((d) => `
+    <button class="dchip ${d.id === activeId ? 'sel' : ''}" data-diff="${d.id}" title="${d.desc}">
+      <b>${d.icon} ${d.name}</b><small>Mạng ×${(d.lives / DIFFICULTIES.normal.lives).toFixed(2)} · Vàng ×${(d.gold / DIFFICULTIES.normal.gold).toFixed(2)}</small>
+    </button>`).join('');
+}
+
+function levelCardHtml(l, i) {
+  const unlocked = isUnlocked(l.id);
+  const best = bestOf(l.id);
+  const board = boardOf(l.id);
+  const st = startState(l, diffOf(S.diff));
+  return `<article class="lvl ${unlocked ? '' : 'locked'} ${l.id === S.level ? 'sel' : ''}" data-level="${l.id}" title="${escapeHtml(l.desc)}">
+    <div class="lvl-top">
+      <span class="lvl-icon" data-ic="${l.icon}"></span>
+      <div class="lvl-name">
+        <b>${l.name}</b>
+        <small>${l.badge} ${l.tier} · ${l.cols}×${l.rows} ô</small>
+      </div>
+      ${unlocked ? '' : '<span class="lvl-lock">🔒</span>'}
+    </div>
+    <p class="lvl-desc">${escapeHtml(l.desc)}</p>
+    <div class="lvl-pills">
+      <span class="pill">🌊 ${l.waves} đợt</span>
+      <span class="pill">❤️ ${st.lives}</span>
+      <span class="pill">🪙 ${st.gold}</span>
+      <span class="pill" title="Độ nguy hiểm của bản đồ">${stars(mapThreat(l, diffOf(S.diff)))}</span>
+    </div>
+    <div class="lvl-best">${best
+      ? `🏅 Kỷ lục: <b>${fmt(best.score)}</b> · đợt ${best.wave}/${l.waves} · ${diffOf(best.difficulty).name}`
+      : '<span class="dim">Chưa có điểm — hãy là người đầu tiên</span>'}
+      ${board[0] ? `<span class="dim"> · 🥇 ${escapeHtml(board[0].name)}</span>` : ''}
+    </div>
+    ${unlocked ? '' : `<div class="lvl-foot">🔒 Hạ <b>${LEVELS[i - 1].name}</b> để mở khoá</div>`}
+  </article>`;
 }
 
 function showMenu() {
-  const d = diffOf(S.diff);
-  const best = S.best ? `<div class="row"><span>Điểm cao nhất</span><span>${fmt(S.best)}</span></div>` : '';
+  const totalWavesAll = LEVELS.reduce((a, l) => a + l.waves, 0);
   showOverlay(`
     <div class="modal">
       <span class="badge">THREE.JS · WEBGL · 1 FILE HTML</span>
       <h1>NEON DEFENSE 3D</h1>
-      <p class="sub">Tinh cầu của bạn đang bị xâm lăng. Xây tháp phòng thủ quanh <b>làn đường neon</b>, nâng cấp, và chặn đứng <b>${TOTAL_WAVES} đợt</b> quân địch — trong đó có drone bay và trùm máy khổng lồ.</p>
-      <h3 style="color:var(--dim);font-size:12px;letter-spacing:.9px;margin:0 0 8px">CHỌN ĐỘ KHÓ</h3>
-      <div class="diffs" id="diffs">
-        ${Object.values(DIFFICULTIES).map((x) => `<div class="diff ${x.id === d.id ? 'sel' : ''}" data-diff="${x.id}">
-          <div class="t">${x.icon} ${x.name}</div>
-          <div class="d">${x.desc}</div>
-          <div class="s">❤️ ${x.lives} · 🪙 ${x.gold} · HP ×${x.hpMul.toFixed(2)}</div>
-        </div>`).join('')}
+      <p class="sub">Chiến dịch gồm <b>${LEVELS.length} bản đồ</b> với bố cục đường đi, số đợt và độ khó riêng
+        (${LEVELS.map((l) => l.waves).join(' · ')} đợt). Xây tháp, nâng cấp, giữ căn cứ — rồi leo bảng xếp hạng.</p>
+      <div class="summary">
+        <div class="sumbox"><b>${clearedCount()}/${LEVELS.length}</b><small>BẢN ĐỒ ĐÃ HẠ</small></div>
+        <div class="sumbox"><b>${totalWavesAll}</b><small>TỔNG SỐ ĐỢT</small></div>
+        <div class="sumbox"><b>${fmt(topScoreAll())}</b><small>KỶ LỤC CAO NHẤT</small></div>
+        <div class="sumbox"><b>${boardCount()}</b><small>ĐIỂM ĐÃ GHI</small></div>
+      </div>
+      <div class="nameRow">
+        <label for="nameInput">Tên của bạn trên bảng xếp hạng</label>
+        <input id="nameInput" maxlength="14" placeholder="Người chơi" value="${escapeHtml(PROG.name)}" />
       </div>
       <div class="helpgrid">
-        <div class="help"><b>🎯 Mục tiêu</b>Địch đi từ <span class="k">cổng tím</span> tới <span class="k">căn cứ</span>. Mỗi con lọt lưới sẽ trừ mạng của bạn.</div>
-        <div class="help"><b>🏗️ Xây dựng</b>Chọn tháp ở thanh dưới (<span class="k">1–5</span>) rồi bấm vào ô đất trống. Bấm vào tháp để nâng cấp (tối đa cấp 5).</div>
-        <div class="help"><b>🛸 Mục tiêu bay</b>Drone bay theo đường riêng trên không. Chỉ <span class="k">Súng Liên Thanh, Súng Băng, Trụ Sét, Bắn Tỉa</span> bắn được chúng.</div>
-        <div class="help"><b>👽 Quái vật &amp; dị dạng</b>Từ đợt 9 có <span class="k">Sinh Vật Ngoài Hành Tinh</span> (dịch chuyển tức thời, bị làm chậm là hết nhảy), từ đợt 12 có <span class="k">Quái Vật Đột Biến</span> (bị hạ sẽ tách thành 2 ấu trùng nhanh).</div>
-        <div class="help"><b>⚡ Kinh tế</b>Gọi đợt sớm được thưởng vàng; mỗi đợt thủ xong cũng có thưởng. Bán tháp thu hồi 62%.</div>
+        <div class="help"><b>🗺️ Nhiều bản đồ</b>Mỗi bản đồ có đường đi, kích thước lưới và số đợt khác nhau — hạ màn này để mở khoá màn kế tiếp.</div>
+        <div class="help"><b>🏆 Bảng xếp hạng</b>Mỗi bản đồ có top 10 riêng. Thắng càng nhiều mạng, điểm cuối càng cao; hạ địch và sống sót đều được tính.</div>
+        <div class="help"><b>🎯 Mục tiêu</b>Địch đi từ <span class="k">cổng tím</span> tới <span class="k">căn cứ</span>. Mỗi con lọt lưới trừ mạng theo độ nguy hiểm của nó.</div>
+        <div class="help"><b>🏗️ Xây dựng</b>Chọn tháp ở thanh dưới (<span class="k">1–5</span>) rồi bấm vào ô đất trống; bấm vào tháp để nâng cấp (tối đa cấp 5) hoặc bán.</div>
+        <div class="help"><b>👽 Quái vật &amp; dị dạng</b>Sinh vật ngoài hành tinh <span class="k">dịch chuyển tức thời</span>, quái vật đột biến <span class="k">tách thành 2 ấu trùng</span>, drone bay đi <span class="k">đường trên không</span>.</div>
         <div class="help"><b>🎮 Điều khiển</b>Kéo để xoay, cuộn để zoom, <span class="k">Space</span> gọi đợt, <span class="k">T</span> tốc độ, <span class="k">P</span> tạm dừng, <span class="k">M</span> âm thanh.</div>
-        <div class="help"><b>💎 Mẹo</b>Pháo Nổ cực mạnh với đám đông nhưng <span class="k">không bắn được drone</span> — hãy trộn nhiều loại tháp.</div>
       </div>
-      ${best}
       <div class="actions">
-        <button class="btn" id="btnStart">▶️ Bắt đầu phòng thủ</button>
-        <button class="btn ghost" id="btnHelp">📖 Xem hướng dẫn</button>
+        <button class="btn" id="btnPlay">🎮 Chơi — chọn bản đồ</button>
+        <button class="btn ghost" id="btnBoard">🏆 Bảng xếp hạng</button>
+        <button class="btn ghost" id="btnHelp">📖 Hướng dẫn</button>
       </div>
-      <div class="foot">Đồng độ khó đã chọn có thể đổi lại ở menu này · Nhấn <b>Space</b> để vào trận nhanh · Bản dựng: <b>${(window.__NEON_BUILD__ || 'dev')}</b></div>
-    </div>`, 'start');
-
-  el.overlay.querySelectorAll('.diff').forEach((node) => {
-    node.onclick = () => {
-      S.diff = node.dataset.diff;
-      el.overlay.querySelectorAll('.diff').forEach((n) => n.classList.toggle('sel', n === node));
-    };
+      <div class="foot">Bản dựng: <b>${window.__NEON_BUILD__ || 'dev'}</b> · Nhấn <b>Space</b> để vào màn chọn bản đồ</div>
+    </div>`, {
+    action: 'menu',
+    primary: showLevelSelect,
+    onRender() {
+      $('btnPlay').onclick = () => showLevelSelect();
+      $('btnBoard').onclick = () => showLeaderboard(S.level, showMenu);
+      $('btnHelp').onclick = () => showHelp();
+      const inp = $('nameInput');
+      inp.oninput = () => setPlayerName(inp.value);
+      inp.onchange = () => { setPlayerName(inp.value); inp.value = PROG.name; toast('Đã lưu tên: ' + playerName(), ''); };
+    },
   });
-  $('btnStart').onclick = () => startGame(S.diff);
-  $('btnHelp').onclick = () => showHelp();
 }
 
+function showLevelSelect() {
+  if (!isUnlocked(S.level)) { S.level = LEVELS[0].id; S.map = LEVELS[0]; }
+  showOverlay(`
+    <div class="modal wide">
+      <span class="badge">CHỌN BẢN ĐỒ &amp; ĐỘ KHÓ</span>
+      <h1>Chiến dịch</h1>
+      <p class="sub">Mỗi bản đồ có bố cục đường đi và số đợt riêng. Hạ một bản đồ (thắng ở bất kỳ độ khó nào) để mở khoá bản đồ kế tiếp.</p>
+      <div class="diffrow" id="diffs">${diffChipsHtml(S.diff)}</div>
+      <div class="nameRow">
+        <label for="nameInput">Tên của bạn trên bảng xếp hạng</label>
+        <input id="nameInput" maxlength="14" placeholder="Người chơi" value="${escapeHtml(PROG.name)}" />
+        <small>Mỗi bản đồ có top 10 riêng — thắng càng nhiều mạng, điểm càng cao.</small>
+      </div>
+      <div class="levels" id="levels">${LEVELS.map(levelCardHtml).join('')}</div>
+      <div class="row" style="margin:0 0 12px"><span>Tiến độ</span><span>${clearedCount()}/${LEVELS.length} bản đồ đã hạ · 🏆 ${boardCount()} điểm đã ghi · Kỷ lục ${fmt(topScoreAll())}</span></div>
+      <div class="actions">
+        <button class="btn" id="btnStart">▶️ Bắt đầu: ${levelDef(S.level).badge} ${levelDef(S.level).name} (${levelDef(S.level).waves} đợt)</button>
+        <button class="btn gold" id="btnBoard">🏆 Bảng xếp hạng</button>
+        <button class="btn ghost" id="btnHelp">📖 Hướng dẫn</button>
+        <button class="btn ghost" id="btnMenu">◀️ Menu</button>
+      </div>
+    </div>`, {
+    action: 'levels',
+    primary: () => startGame(S.level, S.diff),
+    secondary: showMenu,
+    onRender() {
+      ovqa('.dchip').forEach((n) => {
+        n.onclick = () => {
+          S.diff = n.dataset.diff;
+          ovqa('.dchip').forEach((m) => m.classList.toggle('sel', m === n));
+        };
+      });
+      ovqa('.lvl').forEach((card) => {
+        card.onclick = () => {
+          const id = card.dataset.level;
+          if (!isUnlocked(id)) {
+            Sound.play('error');
+            toast(`Bản đồ ${levelDef(id).name} còn khoá — hạ màn trước để mở`, 'bad');
+            return;
+          }
+          S.level = id; S.map = levelDef(id);
+          ovqa('.lvl').forEach((c) => c.classList.toggle('sel', c === card));
+          const l = levelDef(id);
+          $('btnStart').innerHTML = `▶️ Bắt đầu: ${l.badge} ${l.name} (${l.waves} đợt)`;
+          Sound.play('coin');
+        };
+      });
+      $('btnStart').onclick = () => {
+        if (!isUnlocked(S.level)) { toast('Bản đồ này còn khoá', 'bad'); return; }
+        startGame(S.level, S.diff);
+      };
+      $('btnBoard').onclick = () => showLeaderboard(S.level, showLevelSelect);
+      $('btnHelp').onclick = () => showHelp();
+      $('btnMenu').onclick = () => showMenu();
+      const inp = $('nameInput');
+      if (inp) {
+        inp.oninput = () => setPlayerName(inp.value);
+        inp.onchange = () => { setPlayerName(inp.value); inp.value = PROG.name; toast('Đã lưu tên: ' + playerName(), ''); };
+      }
+      const sel = ovq('.lvl.sel');
+      if (sel && sel.scrollIntoView) { try { sel.scrollIntoView({ block: 'nearest' }); } catch (e) { /* ignore */ } }
+    },
+  });
+}
+
+function showLeaderboard(levelId = S.level, onBack = showLevelSelect) {
+  const lv = levelDef(levelId);
+  const board = boardOf(lv.id);
+  const mine = bestOf(lv.id);
+  const tabs = LEVELS.map((l) => `<button class="ltab ${l.id === lv.id ? 'sel' : ''} ${isUnlocked(l.id) ? '' : 'locked'}" data-lb="${l.id}">
+      <span>${l.badge} ${l.name}</span><small>${boardOf(l.id).length}</small>
+    </button>`).join('');
+  const rows = board.length
+    ? board.map((e, i) => `<tr class="${e.id === lastEntryId ? 'me' : ''}">
+        <td class="rank">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)}</td>
+        <td class="nm">${escapeHtml(e.name || 'Người chơi')}${e.win ? ' 🏁' : ''}</td>
+        <td class="sc">${fmt(e.score)}</td>
+        <td class="wv">${e.wave}/${lv.waves}</td>
+        <td class="df">${diffOf(e.difficulty).icon} ${diffOf(e.difficulty).name}</td>
+        <td class="dt">${fmtDate(e.time)}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="6" class="empty">Chưa có ai ghi điểm ở bản đồ này — chơi một ván để mở màn nhé!</td></tr>`;
+  showOverlay(`
+    <div class="modal wide">
+      <span class="badge">BẢNG XẾP HẠNG</span>
+      <h1>🏆 Kỷ lục ${lv.badge} ${lv.name}</h1>
+      <p class="sub">${lv.waves} đợt · ${lv.cols}×${lv.rows} ô · độ nguy hiểm ${stars(mapThreat(lv, diffOf(S.diff)))}${mine ? ` · kỷ lục của bạn: <b>${fmt(mine.score)}</b> (đợt ${mine.wave}/${lv.waves}${mine.win ? ', đã hạ' : ''})` : ''}</p>
+      <div class="ltabs">${tabs}</div>
+      <div class="tablewrap">
+        <table class="board">
+          <thead><tr><th>HẠNG</th><th>NGƯỜI CHƠI</th><th>ĐIỂM</th><th>ĐỢT</th><th>ĐỘ KHÓ</th><th>LÚC</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="nameRow">
+        <label for="nameInput">Tên của bạn</label>
+        <input id="nameInput" maxlength="14" placeholder="Người chơi" value="${escapeHtml(PROG.name)}" />
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnPlay">🎮 Chơi bản đồ này</button>
+        <button class="btn ghost" id="btnBoardBack">◀️ Quay lại</button>
+        <button class="btn ghost" id="btnLevels">🗺️ Chọn bản đồ khác</button>
+        <button class="btn danger" id="btnReset">🗑️ Xoá bảng của bản đồ này</button>
+      </div>
+      <div class="foot">Điểm = điểm trong ván × (1 + 6% × số mạng còn lại) khi thắng · mỗi bản đồ giữ top 10</div>
+    </div>`, {
+    action: 'board',
+    primary: () => { if (isUnlocked(lv.id)) startGame(lv.id, S.diff); else showLevelSelect(); },
+    secondary: showLevelSelect,
+    onRender() {
+      ovqa('.ltab').forEach((t) => { t.onclick = () => showLeaderboard(t.dataset.lb, onBack); });
+      $('btnPlay').onclick = () => {
+        if (!isUnlocked(lv.id)) { toast('Bản đồ này còn khoá', 'bad'); return; }
+        S.level = lv.id; S.map = lv; startGame(lv.id, S.diff);
+      };
+      $('btnLevels').onclick = () => showLevelSelect();
+      $('btnBoardBack').onclick = () => onBack();
+      $('btnReset').onclick = () => {
+        clearBoard(lv.id);
+        toast(`Đã xoá bảng xếp hạng của ${lv.name}`, '');
+        showLeaderboard(lv.id, onBack);
+      };
+      const inp = $('nameInput');
+      inp.oninput = () => setPlayerName(inp.value);
+      inp.onchange = () => {
+        setPlayerName(inp.value);
+        if (lastEntryId) { renameEntry(lv.id, lastEntryId, PROG.name); showLeaderboard(lv.id, onBack); }
+      };
+    },
+  });
+}
 function showHelp() {
   const wasPlaying = S.phase !== 'menu';
   if (wasPlaying) { S.paused = true; updateControls(); }
@@ -1736,85 +2138,128 @@ function showHelp() {
     <div class="modal">
       <span class="badge">HƯỚNG DẪN</span>
       <h1>Chơi thế nào?</h1>
-      <p class="sub">Mục tiêu: giữ căn cứ đến hết <b>${TOTAL_WAVES} đợt</b>. Mỗi kẻ địch lọt lưới sẽ trừ mạng theo độ nguy hiểm của nó.</p>
+      <p class="sub">Chiến dịch có <b>${LEVELS.length} bản đồ</b> (${LEVELS.map((l) => l.waves).join(' · ')} đợt). Giữ căn cứ đến hết số đợt của bản đồ để hạ màn và mở khoá màn kế tiếp.</p>
       <div class="helpgrid">
-        <div class="help"><b>1. Chọn tháp</b>Bấm thẻ tháp ở thanh dưới hoặc phím <span class="k">1–5</span>. Di chuột lên bản đồ để xem trước tầm bắn.</div>
-        <div class="help"><b>2. Xây</b>Bấm vào ô đất trống viền xanh. Ô đỏ = không xây được (đường đi, đá, tháp khác).</div>
-        <div class="help"><b>3. Nâng cấp</b>Bấm vào tháp đã xây → <span class="k">⬆️ Nâng cấp</span> (tối đa cấp 5, chỉ số tăng theo cấp).</div>
+        <div class="help"><b>1. Chọn bản đồ</b>Vào <span class="k">Chơi</span> → bấm thẻ bản đồ → chọn độ khó → <span class="k">Bắt đầu</span>. Bản đồ khoá 🔒 sẽ mở sau khi bạn hạ màn trước.</div>
+        <div class="help"><b>2. Chọn tháp</b>Bấm thẻ tháp ở thanh dưới hoặc phím <span class="k">1–5</span>. Di chuột lên bản đồ để xem trước tầm bắn.</div>
+        <div class="help"><b>3. Xây &amp; nâng cấp</b>Bấm vào ô đất trống viền xanh để xây. Bấm vào tháp đã xây → <span class="k">⬆️ Nâng cấp</span> (tối đa cấp 5) hoặc bán (thu hồi 62%).</div>
         <div class="help"><b>4. Gọi đợt</b>Hết đợt có ${BUILD_TIME}s chuẩn bị. Bấm <span class="k">⚡ Gọi đợt ngay</span> để nhận thêm vàng.</div>
-        <div class="help"><b>🛸 Drone</b>Bay theo đường khác trên không, bỏ qua mọi địa hình. Cần tháp có khả năng bắn mục tiêu bay.</div>
-        <div class="help"><b>👽 Sinh vật ngoài hành tinh</b>Từ đợt 9. Cứ ~4.6 giây nó <span class="k">dịch chuyển tức thời</span> về phía trước 7.5 ô — nhưng khi đang bị Súng Băng làm chậm thì không nhảy được.</div>
-        <div class="help"><b>🧟 Quái vật đột biến</b>Từ đợt 12. Máu dày, giáp cao, và khi bị hạ sẽ <span class="k">tách thành 2 ấu trùng</span> chạy rất nhanh — nhớ chừa tháp bắn nhanh cho phần đuôi.</div>
-        <div class="help"><b>👹 Trùm</b>Xuất hiện mỗi 5 đợt. Máu cực dày, giáp cao — ưu tiên Bắn Tỉa (xuyên giáp) và Trụ Sét.</div>
+        <div class="help"><b>🛸 Drone</b>Bay theo đường riêng trên không, bỏ qua địa hình. Cần tháp bắn được mục tiêu bay (Liên Thanh, Băng, Sét, Bắn Tỉa).</div>
+        <div class="help"><b>👽 Sinh vật ngoài hành tinh</b>Từ đợt 9. Cứ ~4.6 giây <span class="k">dịch chuyển tức thời</span> về phía trước — nhưng khi đang bị Súng Băng làm chậm thì không nhảy được.</div>
+        <div class="help"><b>🧟 Quái vật đột biến</b>Từ đợt 12. Bị hạ sẽ <span class="k">tách thành 2 ấu trùng</span> chạy rất nhanh — chừa tháp bắn nhanh cho đoạn cuối.</div>
+        <div class="help"><b>🏆 Bảng xếp hạng</b>Mỗi bản đồ giữ top 10 điểm. Thắng với nhiều mạng còn lại sẽ được cộng thêm 6% mỗi mạng. Đổi tên ở ô <span class="k">Tên của bạn</span>.</div>
         <div class="help"><b>🎮 Camera</b>Kéo chuột / 1 ngón để xoay, cuộn / chụm 2 ngón để zoom, kéo chuột phải hoặc <span class="k">Shift</span>+kéo để di chuyển tầm nhìn.</div>
-        <div class="help"><b>⌨️ Phím tắt</b><span class="k">Space</span> gọi đợt · <span class="k">T</span> tốc độ · <span class="k">P</span> tạm dừng · <span class="k">U</span> nâng cấp · <span class="k">X</span> bán · <span class="k">Q/E</span> xoay · <span class="k">M</span> âm thanh</div>
+        <div class="help"><b>⌨️ Phím tắt</b><span class="k">Space</span> gọi đợt/tiếp tục · <span class="k">T</span> tốc độ · <span class="k">P</span> tạm dừng · <span class="k">U</span> nâng cấp · <span class="k">X</span> bán · <span class="k">Q/E</span> xoay · <span class="k">M</span> âm thanh · <span class="k">H</span> hướng dẫn</div>
       </div>
       <div class="actions">
-        <button class="btn" id="btnBack">${wasPlaying ? '▶️ Tiếp tục chơi' : '◀️ Về menu'}</button>
+        <button class="btn" id="btnBack">${wasPlaying ? '▶️ Tiếp tục chơi' : '🗺️ Về màn chọn bản đồ'}</button>
       </div>
-    </div>`, wasPlaying ? 'resume' : 'menu');
-  $('btnBack').onclick = () => (wasPlaying ? resumeGame() : showMenu());
+    </div>`, {
+    action: wasPlaying ? 'resume' : 'levels',
+    primary: () => (wasPlaying ? resumeGame() : showLevelSelect()),
+    secondary: () => (wasPlaying ? resumeGame() : showMenu()),
+    onRender() {
+      $('btnBack').onclick = () => (wasPlaying ? resumeGame() : showLevelSelect());
+    },
+  });
 }
-
 function showPause() {
+  const lv = S.map;
   showOverlay(`
-    <div class="modal" style="width:min(520px,92vw)">
+    <div class="modal" style="width:min(560px,92vw)">
       <span class="badge">TẠM DỪNG</span>
       <h1>Đang tạm dừng</h1>
-      <p class="sub">Đợt ${S.wave}/${TOTAL_WAVES} · ${S.enemies.length} kẻ địch trên bản đồ · ⭐ ${fmt(S.score)}</p>
+      <p class="sub">${lv.badge} <b>${lv.name}</b> · đợt ${S.wave}/${lv.waves} · ${S.enemies.length} kẻ địch trên bản đồ · ⭐ ${fmt(S.score)}</p>
+      <div class="summary">
+        <div class="sumbox"><b>❤️ ${S.lives}</b><small>MẠNG</small></div>
+        <div class="sumbox"><b>🪙 ${fmt(S.gold)}</b><small>VÀNG</small></div>
+        <div class="sumbox"><b>🏗️ ${S.towers.length}</b><small>THÁP</small></div>
+        <div class="sumbox"><b>☠️ ${S.kills}</b><small>ĐÃ HẠ</small></div>
+      </div>
       <div class="actions">
         <button class="btn" id="btnResume">▶️ Tiếp tục</button>
         <button class="btn ghost" id="btnHelp2">📖 Hướng dẫn</button>
-        <button class="btn danger" id="btnQuit">🏳️ Về menu</button>
+        <button class="btn ghost" id="btnBoard2">🏆 Bảng xếp hạng</button>
+        <button class="btn danger" id="btnQuit">🏳️ Chọn bản đồ khác</button>
       </div>
-    </div>`, 'resume');
-  $('btnResume').onclick = () => resumeGame();
-  $('btnHelp2').onclick = () => showHelp();
-  $('btnQuit').onclick = () => { S.paused = false; S.phase = 'menu'; showMenu(); };
+    </div>`, {
+    action: 'resume',
+    primary: () => resumeGame(),
+    secondary: () => resumeGame(),
+    onRender() {
+      $('btnResume').onclick = () => resumeGame();
+      $('btnHelp2').onclick = () => showHelp();
+      $('btnBoard2').onclick = () => showLeaderboard(S.level, showPause);
+      $('btnQuit').onclick = () => { S.paused = false; S.phase = 'menu'; updateControls(); showLevelSelect(); };
+    },
+  });
 }
-
-function endStats() {
-  const total = Math.round(S.score * (1 + S.lives * 0.06));
-  return { total };
-}
-function saveBest(score) {
-  try {
-    const cur = Number(localStorage.getItem('neon-defense-best') || 0);
-    if (score > cur) { localStorage.setItem('neon-defense-best', String(score)); S.best = score; }
-    else S.best = cur;
-  } catch (e) { S.best = Math.max(S.best, score); }
-}
-function loadBest() {
-  try { S.best = Number(localStorage.getItem('neon-defense-best') || 0); } catch (e) { S.best = 0; }
-}
-
 function showEnd(win) {
-  const { total } = endStats(win ? S.score : S.score);
-  const score = win ? total : S.score;
-  saveBest(score);
+  const lv = S.map;
+  const score = finalScore(S.score, S.lives, win);
+  const entry = {
+    levelId: lv.id, name: playerName(), score, wave: S.wave, kills: S.kills, lives: S.lives,
+    difficulty: S.diff, win, time: Date.now(), id: makeEntryId(),
+  };
+  const res = submitScore(entry);
+  recordResult(lv.id, S.diff, entry);
+  const nextLevel = win ? LEVELS[levelIndex(lv.id) + 1] : null;
+  unlockNext(lv.id);
+  const rankLine = res.inserted
+    ? `🏆 Bạn xếp <b>hạng #${res.rank}</b> trong bảng xếp hạng ${lv.badge} ${lv.name}!`
+    : (win ? `Bảng xếp hạng ${lv.name} đã đầy 10 suất — chưa lọt top lần này.` : `Chưa lọt top 10 của ${lv.name} — cố thêm chút nữa nhé!`);
   Sound.play(win ? 'win' : 'lose');
+
   showOverlay(`
     <div class="modal">
-      <span class="badge">${win ? 'CHIẾN THẮNG' : 'THẤT THỦ'}</span>
+      <span class="badge">${win ? 'CHIẾN THẮNG' : 'THẤT THỦ'} · ${lv.badge} ${lv.name}</span>
       <h1>${win ? '🏆 Căn cứ an toàn!' : '💀 Căn cứ đã thất thủ'}</h1>
       <p class="sub">${win
-        ? `Bạn đã đẩy lùi toàn bộ ${TOTAL_WAVES} đợt xâm lăng ở độ khó ${diffOf(S.diff).name}. Điểm thưởng thêm nhờ giữ được ${S.lives} mạng.`
-        : `Bạn cầm cự được ${S.wave}/${TOTAL_WAVES} đợt ở độ khó ${diffOf(S.diff).name}. Thử lại với chiến thuật nhiều loại tháp hơn nhé!`}</p>
+        ? `Bạn đã đẩy lùi toàn bộ <b>${lv.waves} đợt</b> ở độ khó ${diffOf(S.diff).name}. Điểm thưởng thêm nhờ giữ được ${S.lives} mạng.`
+        : `Bạn cầm cự được <b>${S.wave}/${lv.waves} đợt</b> ở độ khó ${diffOf(S.diff).name}. Thử trộn thêm loại tháp và ưu tiên vị trí gần khúc cua nhé!`}</p>
+      <div class="rankline ${res.inserted ? 'good' : ''}">${rankLine}</div>
       <div class="summary">
         <div class="sumbox"><b>⭐ ${fmt(score)}</b><small>ĐIỂM</small></div>
-        <div class="sumbox"><b>🌊 ${S.wave}</b><small>ĐỢT ĐÃ QUA</small></div>
+        <div class="sumbox"><b>🌊 ${S.wave}/${lv.waves}</b><small>ĐỢT ĐÃ QUA</small></div>
         <div class="sumbox"><b>☠️ ${S.kills}</b><small>ĐỊCH ĐÃ HẠ</small></div>
-        <div class="sumbox"><b>🏗️ ${S.built}</b><small>THÁP ĐÃ XÂY</small></div>
         <div class="sumbox"><b>❤️ ${S.lives}</b><small>MẠNG CÒN LẠI</small></div>
-        <div class="sumbox"><b>🏅 ${fmt(S.best)}</b><small>KỶ LỤC CỦA BẠN</small></div>
+        <div class="sumbox"><b>🏗️ ${S.built}</b><small>THÁP ĐÃ XÂY</small></div>
+        <div class="sumbox"><b>🪙 ${fmt(S.gold)}</b><small>VÀNG CUỐI VÁN</small></div>
+      </div>
+      <div class="nameRow">
+        <label for="nameInput">Ghi tên vào bảng xếp hạng</label>
+        <input id="nameInput" maxlength="14" placeholder="Người chơi" value="${escapeHtml(PROG.name)}" />
+        <small id="nameHint">Đang lưu với tên: <b>${escapeHtml(playerName())}</b></small>
       </div>
       <div class="actions">
-        <button class="btn" id="btnAgain">🔄 Chơi lại (${diffOf(S.diff).name})</button>
-        <button class="btn ghost" id="btnMenu2">🎚️ Đổi độ khó</button>
+        <button class="btn" id="btnAgain">🔄 Chơi lại ${lv.name}</button>
+        ${nextLevel ? `<button class="btn gold" id="btnNext">➡️ Màn kế: ${nextLevel.badge} ${nextLevel.name} (${nextLevel.waves} đợt)</button>` : ''}
+        <button class="btn ghost" id="btnBoardEnd">🏆 Bảng xếp hạng</button>
+        <button class="btn ghost" id="btnLevels">🗺️ Chọn bản đồ</button>
       </div>
-    </div>`, 'restart');
-  $('btnAgain').onclick = () => startGame(S.diff);
-  $('btnMenu2').onclick = () => showMenu();
+    </div>`, {
+    action: 'end',
+    primary: () => startGame(lv.id, S.diff),
+    secondary: () => showLevelSelect(),
+    onRender() {
+      $('btnAgain').onclick = () => startGame(lv.id, S.diff);
+      const bn = $('btnNext');
+      if (bn) bn.onclick = () => startGame(nextLevel.id, S.diff);
+      $('btnBoardEnd').onclick = () => showLeaderboard(lv.id);
+      $('btnLevels').onclick = () => showLevelSelect();
+      const inp = $('nameInput');
+      const hint = $('nameHint');
+      inp.oninput = () => {
+        setPlayerName(inp.value);
+        if (hint) hint.innerHTML = `Đang lưu với tên: <b>${escapeHtml(playerName())}</b>`;
+      };
+      inp.onchange = () => {
+        setPlayerName(inp.value);
+        renameEntry(lv.id, entry.id, PROG.name);
+        toast('Đã cập nhật tên trên bảng xếp hạng', '');
+      };
+    },
+  });
 }
 
 function gameOver() {
@@ -1981,18 +2426,16 @@ function onKey(e) {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
   if (overlayShown) {
+    // khi đang mở bảng (menu/chọn bản đồ/BXH/tạm dừng/kết ván)
     if ((k === 'p' || k === 'P') && overlayAction === 'resume') { resumeGame(); return; }
-    if (k === ' ' || k === 'Enter' || k === 'Escape') {
+    if (k === 'm' || k === 'M') { toggleSoundKey(); return; }
+    if (k === 'Escape') { (overlaySecondary || overlayPrimary || showMenu)(); return; }
+    if (k === ' ' || k === 'Enter') {
       e.preventDefault();
-      if (k === 'Escape' && S.phase !== 'menu' && S.phase !== 'over' && S.phase !== 'victory') resumeGame();
-      else if (typeof overlayAction === 'string') {
-        if (overlayAction === 'start') startGame(S.diff);
-        else if (overlayAction === 'resume') resumeGame();
-        else if (overlayAction === 'restart') startGame(S.diff);
-        else if (overlayAction === 'menu') showMenu();
-      }
+      if (overlayPrimary) overlayPrimary();
+      return;
     }
-    if (k === 'm' || k === 'M') toggleSoundKey();
+    if (k === 'Tab') { e.preventDefault(); el.side.classList.toggle('open'); }
     return;
   }
   if (k >= '1' && k <= '5') { const t = TOWERS[Number(k) - 1]; if (t) selectBuild(t.id); }
@@ -2158,13 +2601,33 @@ function resize() {
 }
 
 /* ------------------------------ bắt đầu game --------------------------- */
-function startGame(diffId) {
+/**
+ * Bắt đầu một ván.
+ * @param levelArg id bản đồ (hoặc id độ khó để tương thích cách gọi cũ)
+ * @param diffArg  id độ khó
+ */
+function startGame(levelArg, diffArg) {
+  let levelId = S.level, diffId = diffArg;
+  if (typeof levelArg === 'string' && LEVELS.some((l) => l.id === levelArg)) levelId = levelArg;
+  else if (typeof levelArg === 'string' && DIFFICULTIES[levelArg]) diffId = levelArg;
+  diffId = diffId || S.diff;
+  const level = levelDef(levelId);
   const d = diffOf(diffId);
-  S.diff = d.id;
-  S.gold = d.gold; S.lives = d.lives; S.wave = 0; S.score = 0; S.kills = 0; S.leaks = 0; S.built = 0;
+  if (!isUnlocked(level.id)) { Sound.play('error'); toast(`${level.name} còn khoá — hạ màn trước để mở`, 'bad'); showLevelSelect(); return; }
+  S.level = level.id; S.map = level; S.diff = d.id;
+  rememberLevel(level.id);
+
+  // dựng lại thế giới tĩnh theo bản đồ (địa hình, đường đi, trang trí, căn cứ, cổng)
+  buildStaticWorld(level.id);
+
+  const st = startState(level, d);
+  S.gold = st.gold; S.lives = st.lives; S.wave = 0; S.score = 0; S.kills = 0; S.leaks = 0; S.built = 0;
   S.waveActive = false; S.waveData = null; S.spawnIdx = 0; S.waveTimer = 0;
   S.buildTimer = BUILD_TIME; S.buildMode = null; S.selected = null; S.hover = null; S.hoverTower = null;
   S.paused = false; S.speed = 1; S.autoStart = true; S.sim = 0; CAM.shake = 0;
+  S.best = 0;
+  { const b = boardOf(level.id); if (b.length) S.best = b[0].score; }
+  { const c = bestOf(level.id); if (c && c.score > S.best) S.best = c.score; }
 
   for (const e of S.enemies) world.remove(e.g);
   for (const t of S.towers) world.remove(t.group);
@@ -2173,17 +2636,17 @@ function startGame(diffId) {
   towerAt.clear();
   cancelBuild();
   makeGhost(null);
+  FX.length = 0;
   if (indicator) indicator.grp.visible = false;
 
-  CAM.target.set(0, 0, 0.5); CAM.theta = -0.7; CAM.phi = 0.82; CAM.dist = 42;
+  fitCamera(true);
   Sound.init(); Sound.resume();
   hideOverlay();
   S.phase = 'build';
   _lastHud = {}; updateCards._sig = null; updateInspector._sig = null;
   updateHUD(true); updateCards(); updateWavePanel(); updateInspector(true); updateControls();
-  toast(`Sẵn sàng! Xây tháp rồi bấm ⚡ Gọi đợt`, 'good');
+  toast(`${level.badge} ${level.name} · ${level.waves} đợt · độ khó ${d.name} — xây tháp rồi bấm ⚡ Gọi đợt`, 'good');
 }
-
 function boot() {
   try {
     initRenderer();
@@ -2194,17 +2657,25 @@ function boot() {
     buildControls();
     bindInput();
     resize();
-    loadBest();
+    loadProgress();
     S.phase = 'menu';
     updateCards(); updateWavePanel(); updateInspector(true); updateHUD(true); updateControls();
     window.addEventListener('resize', resize);
     requestAnimationFrame(frame);
     console.log('%c🎮 Neon Defense 3D', 'color:#3ddcff;font-weight:700', '· bản dựng', window.__NEON_BUILD__ || 'dev');
     window.NEON = {
-      S, TOWERS, ENEMIES, DIFFICULTIES, GRID, TOTAL_WAVES, MAX_LEVEL, BUILD_TIME,
+      S, TOWERS, ENEMIES, DIFFICULTIES, GRID, MAX_LEVEL, BUILD_TIME, totalWaves,
+      LEVELS, levelDef, levelIndex, setMap: applyLevelMap, activeMap, totalWaves, startState, mapThreat,
+      finalScore, insertScore, scoreCompare, makeEntryId,
+      qualifies: (levelId, score, wave = 0, kills = 0) => qualifies(boardOf(levelId), { score, wave, kills, time: Date.now() }, 10),
+      PROG, PROGRESS: PROG, isUnlocked, bestOf, boardOf, writeBoard, clearBoard, submitScore, renameEntry,
+      setPlayerName, setPlayer: setPlayerName, playerName, clearedCount, boardCount, topScoreAll,
+      unlockAll, resetProgress, rememberLevel, loadProgress, startWaveAt: null,
+      showMenu, showLevelSelect, showLeaderboard, showEnd, showHelp, showPause, fitCamera,
       startGame, startWave, placeTower, upgradeTower, sellTower, buildWave, towerStats,
       upgradeCost, sellValue, selectBuild, cancelBuild, tick, frame, Sound, canBuild,
       spawnEnemy, damageEnemy, explode, diffOf, pathTiles, worldPos, enemyStats,
+      pathWorldPoints, airWorldPoints, buildPathData,
       enemyStatsOf: enemyStats, applyArmor, waveBonus, callBonus, waveThreat, stars, fmt,
       scene, camera, renderer, CAM, FX, blocked, towerAt, basePos, portalObj, baseObj,
       ICONS, svgIcon, renderIcons, TILE, updateWavePanel, updateInspector, updateCards, updateHUD, renderIconsIn: renderIcons,

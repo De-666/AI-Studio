@@ -1,0 +1,6 @@
+<!-- Icon bản đồ của Neon Defense. Muốn dùng icon khác (ví dụ tải từ Flaticon):
+     ghi đè chính tệp này (giữ nguyên tên map-core.svg),
+     giữ fill="currentColor" cho phần nét chính, rồi chạy: npm run game:build -->
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M12 2.4 20 6.8v9.4L12 20.6 4 16.2V6.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 7 16 9.4v4.6L12 16.4 8 14V9.4z" fill="currentColor" opacity=".9"/><path d="M12 16.4v5.4M12 2.4v4.6" stroke="currentColor" stroke-width="1.3" stroke-opacity=".5"/><circle cx="12" cy="12" r="1.5" fill="#0b1020"/>
+</svg>

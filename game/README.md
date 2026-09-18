@@ -4,7 +4,8 @@ Game **phòng thủ tháp 3D** chạy trên WebGL (Three.js r160), đóng gói t
 ([`../game3d.html`](../game3d.html)) — mở là chơi, **không cần internet, không cần CDN, không cần build step nào khi chơi**.
 
 > Bối cảnh: tinh cầu neon của bạn bị xâm lăng qua **cổng không gian tím** ở rìa trái bản đồ.
-> Quân địch đi theo làn đường phát sáng tới **căn cứ** ở rìa phải. Xây tháp, nâng cấp, giữ căn cứ qua **25 đợt**.
+> Quân địch đi theo làn đường phát sáng tới **căn cứ** ở rìa phải. Xây tháp, nâng cấp, giữ căn cứ qua **6 bản đồ
+> với 20 → 40 đợt khác nhau**, rồi leo **bảng xếp hạng top 10 riêng cho từng bản đồ**.
 
 ---
 
@@ -61,18 +62,46 @@ Trình duyệt cần bật WebGL. Nếu máy quá yếu, game tự hiện thông
 | 🐛 Ấu Trùng | 45 | 4.7 | 0 | Sinh ra từ xác quái vật, chạy rất nhanh, khó chặn nếu hết tháp ở đoạn cuối |
 | 👹 Trùm Máy | 1350 | 1.5 | 10 | Xuất hiện mỗi 5 đợt (1 → 3 con), lọt lưới mất 8 mạng |
 
+### 🗺️ 6 bản đồ — mỗi bản đồ một số đợt, một bố cục, một bộ icon riêng
+
+| # | Bản đồ | Icon | Lưới | Đợt | Đặc trưng riêng | Mở khoá |
+|---|---|---|---|---|---|---|
+| 1 | 🌱 Đồng Bằng Neon | `map-plains` | 18×14 | **20** | Địa hình trống, máu địch ×0.85, vàng ×1.18 — dễ thở | có sẵn |
+| 2 | ⚙️ Hành Lang Xoắn | `map-corridor` | 22×16 | **25** | Bản đồ chuẩn để đo cân bằng | hạ màn 1 |
+| 3 | ❄️ Mê Cung Băng | `map-frost` | 22×16 | **30** | Drone bay ×1.55, Tia Chớp ×1.2 | hạ màn 2 |
+| 4 | 🏜️ Sa Mạc Plasma | `map-desert` | 26×16 | **30** | Xe Tăng ×1.45, Quái Vật ×1.25 | hạ màn 3 |
+| 5 | 🛰️ Vành Đai Sao | `map-orbit` | 24×18 | **35** | Ngoài hành tinh ×1.6, Drone ×1.35 | hạ màn 4 |
+| 6 | ☠️ Lõi Tử Thần | `map-core` | 24×18 | **40** | Trùm ×1.4, Quái Vật ×1.5, Ngoài hành tinh ×1.4 | hạ màn 5 |
+
+- **Màn chọn bản đồ** (`showLevelSelect`) hiện đủ 6 thẻ: icon SVG của bản đồ, tên, kích thước lưới,
+  số đợt, mạng/vàng khởi đầu, độ nguy hiểm và kỷ lục của bạn. Thẻ chưa mở khoá bị làm mờ + ổ khoá 🔒.
+- **Máu địch scale theo tiến độ của từng bản đồ**: `waveCurve(t) = 0.6 + 1.8t + 3.4t² + 8.4t³` với
+  `t = (đợt−1)/(số đợt−1)` → cùng một đợt ở bản đồ dài sẽ nhẹ hơn ở bản đồ ngắn, và nửa sau ván luôn căng hơn.
+- Trùm xuất hiện mỗi 5 đợt; bản đồ dài (>30 đợt) tăng số trùm chậm hơn để không dồn quá nhiều.
+- Mỗi bản đồ có **seed riêng** cho trang trí → cùng bản đồ luôn giống hệt nhau ở mọi ván (dễ học, dễ so điểm).
+
+### 🏆 Bảng xếp hạng (top 10 mỗi bản đồ)
+
+| Điều | Chi tiết |
+|---|---|
+| Lưu ở đâu | `localStorage` — `neon-defense-board:<mapId>`, tiến độ `neon-defense-progress`, tên `neon-defense-name` |
+| Điểm cuối ván | `điểm trong ván × (1 + 6% × số mạng còn lại)` nếu thắng, thua thì giữ nguyên điểm |
+| Xếp hạng | Điểm → đợt đã qua → số địch hạ → thời gian nộp sớm hơn |
+| Màn hình | Menu chính 🏆 · màn chọn bản đồ · bảng tạm dừng (P) · bảng kết thúc ván (hiện hạng của bạn) |
+| Tiện ích | Đổi tên người chơi, tab sang bản đồ khác, 🗑️ xoá bảng của bản đồ đang xem |
+
 ### Cơ chế đáng chú ý
 
 - **Dị năng của quái & dị dạng**: 👽 *dịch chuyển tức thời* (bỏ qua một đoạn đường — nhưng Súng Băng làm chậm là khoá được), 🧟 *tách đàn* (chết sinh ra ấu trùng chạy nhanh), 🛸 *bay* (đi đường riêng trên không).
 - **Giáp giảm theo tỉ lệ** (`armor/(armor+22)`, tối đa −55%) nên tháp sát thương nhỏ vẫn có ích, còn Bắn Tỉa thì bỏ qua hoàn toàn.
 - **Máu địch scale phi tuyến**: từ đợt 15 trở đi nhân thêm hệ số "late" — nửa sau của ván mới thực sự căng.
 - **Kinh tế**: gọi đợt sớm được thưởng vàng (tối đa ~40 vàng/đợt), qua đợt được `40 + 7×đợt`, hạ địch rơi vàng; bán tháp luôn lỗ 38% để tránh lạm phát.
-- **Trạng thái bàn chơi**: 22×16 ô, đường đi 14 khúc uốn lượn, trang trí (đá, tinh thể phát sáng, cây, cột đèn neon, vành núi) chiếm ô nên **không thể xây tràn lan** — phải chọn vị trí.
+- **Trạng thái bàn chơi**: lưới đổi theo bản đồ (18×14 → 24×18), đường đi uốn lượn riêng từng màn, trang trí (đá, tinh thể phát sáng, cây, cột đèn neon, vành núi) chiếm ô nên **không thể xây tràn lan** — phải chọn vị trí.
 - **Không có thư viện ngoài**: UI/âm thanh/hiệu ứng đều tự viết — WebAudio tổng hợp tiếng súng, tiếng nổ, nhạc hiệu thắng/thua (không có file âm thanh).
 
 ### 🎨 Bộ icon (tự vẽ, không phụ thuộc CDN)
 
-Mọi icon trong game — 5 loại tháp, 8 loại địch, logo — đều là **SVG tự vẽ** nằm ở hằng `ICONS`
+Mọi icon trong game — 5 loại tháp, 8 loại địch, **6 bản đồ**, logo — đều là **SVG tự vẽ** nằm ở hằng `ICONS`
 trong `game/src/game.js` và được render bằng `svgIcon(key, color)` / `renderIcons(root)`.
 Không có ảnh ngoài, không gọi mạng, icon tự lấy màu theo từng loại tháp/địch.
 
@@ -80,7 +109,7 @@ Muốn thay bằng icon tải về (ví dụ **Flaticon** — monster/alien):
 
 ```bash
 # 1) tải file .svg, ghi đè vào thư mục icons, GIỮ NGUYÊN tên tệp:
-#    game/icons/alien.svg  ·  game/icons/monster.svg  ·  game/icons/boss.svg …
+#    game/icons/alien.svg  ·  game/icons/monster.svg  ·  game/icons/map-frost.svg …
 #    (giữ fill="currentColor" cho phần nét chính để icon ăn màu theo theme)
 npm run game:build     # 2) build lại là xong
 ```
@@ -93,8 +122,8 @@ và ghi đè bộ icon mặc định — xem `game/icons/README.md`.
 | Độ khó | Mạng | Vàng đầu | Máu địch | Vàng nhận | Kết quả đo bằng bot (xem bên dưới) |
 |---|---|---|---|---|---|
 | 🌱 Dễ | 25 | 275 | ×0.80 | ×1.15 | Thắng thoải mái |
-| ⚔️ Thường | 20 | 220 | ×1.00 | ×1.00 | Thắng nếu chơi tốt — bot "người thường" về đích với 4/20 mạng, đúng độ căng mong muốn |
-| 💀 Khó | 16 | 195 | ×1.32 | ×0.98 | Bot tối ưu thắng sát nút (còn 11/16 mạng); bot chơi "người thường" thua ở đợt cuối |
+| ⚔️ Thường | 20 | 220 | ×1.00 | ×1.00 | Thắng nếu chơi tốt — ở bản đồ chuẩn, bot "người thường" về đích với 20/20 mạng; sang bản đồ 5–6 thì phải chơi khéo hơn |
+| 💀 Khó | 16 | 195 | ×1.32 | ×0.98 | Bot tối ưu thắng (16/16 mạng ở bản đồ chuẩn, 9/16 ở bản đồ cuối); bot "người thường" thua ở đợt cuối |
 
 ---
 
@@ -104,7 +133,8 @@ và ghi đè bộ icon mặc định — xem `game/icons/README.md`.
 game/
 ├── src/
 │   ├── logic.js        # LÕI LOGIC thuần (không DOM, không THREE) → test được bằng Node
-│   │                   # lưới & đường đi, độ khó, chỉ số tháp/địch, công thức đợt sóng, kinh tế
+│   │                   # 6 bản đồ (lưới/đường đi/số đợt/hệ số riêng), độ khó, chỉ số tháp/địch,
+│   │                   # công thức đợt sóng theo tiến độ, kinh tế, điểm cuối ván & luật bảng xếp hạng
 │   ├── game.js         # Engine Three.js: scene/ánh sáng, model tháp & địch, FX hạt, gameplay,
 │   │                   # HUD + menu + input (chuột/bàn phím/cảm ứng), vòng lặp render
 │   └── template.html   # Khung HTML + CSS (giao diện neon), có 2 mốc để nhúng script
@@ -115,7 +145,7 @@ game/
 ├── build.mjs           # Đóng gói 1 file: three ESM → script cổ điển (IIFE riêng) + logic + game → HTML
 ├── serve.mjs           # Server tĩnh nhỏ để chơi/preview (bind 0.0.0.0)
 └── test/
-    ├── run.mjs         # 251 kiểm tra headless (jsdom + stub WebGL) — npm run game:test
+    ├── run.mjs         # 451 kiểm tra headless (jsdom + stub WebGL) — npm run game:test
     └── balance.mjs     # Bot tự chơi để đo độ khó — npm run game:balance
 ```
 
@@ -129,8 +159,10 @@ nên không xung đột tên biến với code game; code game cũng nằm trong
 ```bash
 npm run game:build      # dựng lại game3d.html từ src/
 cd game/test && npm install && cd ../..   # cài jsdom cho harness (1 lần)
-npm run game:test       # 251 kiểm tra: logic, gameplay, UI, input, fuzz, thắng/thua, rò rỉ mesh
-npm run game:balance    # bot tự chơi 3 độ khó → in kết quả
+npm run game:test       # 451 kiểm tra: logic, gameplay, UI, input, fuzz, thắng/thua, rò rỉ mesh
+npm run game:balance    # bot tự chơi 3 độ khó ở bản đồ chuẩn → in kết quả
+node game/test/balance.mjs --all        # thăm dò cả 6 bản đồ (chậm hơn, ~3-4 phút)
+node game/test/balance.mjs orbit hard    # chỉ một bản đồ / độ khó bất kỳ
 ```
 
 Harness chạy `game3d.html` **thật** trong jsdom, chỉ thay `WebGLRenderer` bằng stub (scene graph, gameplay,
@@ -139,17 +171,17 @@ dị năng quái/dị dạng, kinh tế, thao tác chuột–bàn phím–cảm 
 và cả kiểm tra rò rỉ mesh. Ví dụ kết quả gần nhất:
 
 ```
-Kết quả: 251 kiểm tra đạt, 0 thất bại · 4.2s
+Kết quả: 451 kiểm tra đạt, 0 thất bại · 5.7s
 
-=== KẾT QUẢ THĂM DÒ CÂN BẰNG ===
+=== KẾT QUẢ THĂM DÒ CÂN BẰNG ===   (Hành Lang Xoắn — bản đồ chuẩn 25 đợt)
 · bot tối ưu (không giới hạn số tháp)
-  easy    → đợt 25/25 · victory · mạng 25 · lọt 0
-  normal  → đợt 25/25 · victory · mạng 20 · lọt 0
-  hard    → đợt 25/25 · victory · mạng 11 · lọt 5
+  easy    → đợt 25/25 · victory · mạng 25 · tháp 78 · lọt 0
+  normal  → đợt 25/25 · victory · mạng 20 · tháp 78 · lọt 0
+  hard    → đợt 25/25 · victory · mạng 16 · tháp 78 · lọt 0
 · người chơi thật (~26 tháp, cấp ≤3, không gọi đợt sớm)
-  easy    → đợt 25/25 · victory · mạng 25 · lọt 0
-  normal  → đợt 25/25 · victory · mạng  4 · lọt 2   ← căng dần ở nửa sau ván
-  hard    → đợt 25/25 · over    · mạng  0 · lọt 9
+  easy    → đợt 25/25 · victory · mạng 25 · tháp 26 · lọt 0
+  normal  → đợt 25/25 · victory · mạng 20 · tháp 26 · lọt 0   ← căng dần ở nửa sau ván
+  hard    → đợt 25/25 · over    · mạng  0 · tháp 26 · lọt 3
 ```
 
 ## 🐞 Lỗi đã gặp & cách phòng ngừa

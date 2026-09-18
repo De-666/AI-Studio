@@ -1,6 +1,6 @@
 # 🎨 Bộ icon của game
 
-Game **không phụ thuộc CDN**: mọi icon (tháp + địch) là **SVG tự vẽ** nằm trong hằng `ICONS` ở
+Game **không phụ thuộc CDN**: mọi icon (tháp + địch + bản đồ) là **SVG tự vẽ** nằm trong hằng `ICONS` ở
 `game/src/game.js`, render qua `svgIcon(key, color)` / `renderIcons(root)`.
 
 ## Thay bằng icon ngoài (ví dụ Flaticon) — 2 bước
@@ -14,6 +14,7 @@ Game **không phụ thuộc CDN**: mọi icon (tháp + địch) là **SVG tự v
    | `spawn.svg` | 🐛 Ấu Trùng |
    | `boss.svg` · `tank.svg` · `flyer.svg` · `grunt.svg` · `runner.svg` | các loại địch còn lại |
    | `gun.svg` · `cannon.svg` · `frost.svg` · `tesla.svg` · `sniper.svg` | các loại tháp |
+   | `map-plains.svg` · `map-corridor.svg` · `map-frost.svg` · `map-desert.svg` · `map-orbit.svg` · `map-core.svg` | 6 bản đồ ở màn chọn bản đồ + chip HUD |
    | `logo.svg` | logo góc trên bên trái |
 
 2. Chạy `npm run game:build` — `build.mjs` tự nhúng mọi tệp `.svg` trong thư mục này vào

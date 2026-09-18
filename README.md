@@ -14,13 +14,13 @@ Repo này có thêm một **game tower defense 3D bằng Three.js**, đóng gói
 
 - 22×16 ô đấu trường neon, đường đi uốn lượn, cổng không gian & căn cứ phát sáng
 - 5 loại tháp (liên thanh · pháo nổ · súng băng · trụ sét · bắn tỉa) × 5 cấp nâng cấp
-- 5 loại địch + trùm (drone bay đi đường riêng), 25 đợt, 3 độ khó, tiếng động tổng hợp bằng WebAudio
+- 6 bản đồ (20 → 40 đợt, lưới & bối cảnh riêng), bảng xếp hạng top 10 mỗi bản đồ, 8 loại địch + trùm (quái vật tách đàn, alien dịch chuyển, drone bay đường riêng), 3 độ khó, tiếng động tổng hợp bằng WebAudio
 - HUD/menu/điều khiển đầy đủ cho **chuột · bàn phím · cảm ứng**
 
 ```bash
 npm run game          # chơi ngay tại http://localhost:5173/game3d.html
 npm run game:build    # dựng lại game3d.html từ game/src/
-npm run game:test     # 251 kiểm tra headless (logic + scene graph + frustum)
+npm run game:test     # 451 kiểm tra headless (logic + scene graph + frustum)
 npm run game:balance  # bot tự chơi để đo cân bằng độ khó
 ```
 

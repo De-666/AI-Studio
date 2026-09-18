@@ -10,6 +10,11 @@ const STUB = `<script>(function(){ const T=window.THREE; T.WebGLRenderer = class
 const vc = new VirtualConsole();
 const dom = new JSDOM(buildHtml(buildParts(), STUB), { runScripts:'dangerously', pretendToBeVisual:true, url:'http://localhost/', virtualConsole: vc });
 const N = dom.window.NEON, S = N.S;
+N.unlockAll();                       // thăm dò mọi bản đồ, không phụ thuộc tiến độ lưu
+const argv = process.argv.slice(2);
+const ALL = argv.includes('--all');
+const LEVEL = (argv.find((a) => N.LEVELS.some((l) => l.id === a)) || 'corridor');
+const LEVELS = ALL ? N.LEVELS.map((l) => l.id) : [LEVEL];
 function step(dt=1/30,n=1){ const was=S.paused; S.paused=false; for(let i=0;i<n;i++) N.tick(dt); S.paused=was; }
 function runUntil(p,maxSec=300){ let t=0; while(t<maxSec){ step(); t+=1/30; if(p()) return t; } return -1; }
 function tilesNearPath(){
@@ -24,7 +29,7 @@ function play(diffId, opts={}){
   const maxTowers = opts.maxTowers || 999;
   const maxLevel = opts.maxLevel || 3;
   const early = opts.early !== false;
-  N.startGame(diffId); S.paused=true;
+  N.startGame(opts.level || LEVEL, diffId); S.paused=true;
   if (!early) S.autoStart = true;   // để đồng hồ tự mở đợt thay vì gọi sớm
   const spots = tilesNearPath();
   const mix = ['gun','gun','cannon','frost','tesla','sniper','gun','cannon','tesla','sniper','frost','gun'];
@@ -51,7 +56,8 @@ function play(diffId, opts={}){
     }
     if (runUntil(()=>!S.waveActive, 400) < 0) break;
   }
-  return { diff: diffId, wave: S.wave, phase: S.phase, lives: S.lives, kills: S.kills, towers: S.towers.length, leaks: S.leaks, score: S.score };
+  return { level: S.map.id, waves: S.map.waves, diff: diffId, wave: S.wave, phase: S.phase,
+           lives: S.lives, kills: S.kills, towers: S.towers.length, leaks: S.leaks, score: S.score };
 }
 console.log('\n=== KẾT QUẢ THĂM DÒ CÂN BẰNG ===');
 const scen = [
@@ -59,10 +65,16 @@ const scen = [
   ['người chơi thật (~26 tháp, cấp ≤3)', { maxTowers: 26, maxLevel: 3, early: false }],
 ];
 for (const [label, opts] of scen){
-  console.log('\n· ' + label);
-  for (const d of ['easy','normal','hard']){
-    const r = play(d, opts);
-    console.log(`  ${r.diff.padEnd(7)} → đợt ${String(r.wave).padStart(2)}/${N.TOTAL_WAVES} · ${r.phase.padEnd(8)} · mạng ${r.lives.toString().padStart(2)} · tháp ${r.towers} · hạ ${r.kills} · lọt ${r.leaks} · điểm ${r.score}`);
+  console.log('\n' + '=== ' + label + ' ===');
+  for (const lv of LEVELS){
+    if (ALL) console.log('  [' + lv + ']');
+    for (const d of ['easy','normal','hard']){
+      const r = play(d, Object.assign({ level: lv }, opts));
+      console.log('  ' + r.diff.padEnd(7) + ' → đợt ' + String(r.wave).padStart(2) + '/' + r.waves
+        + ' · ' + r.phase.padEnd(8) + ' · mạng ' + r.lives + ' · tháp ' + r.towers
+        + ' · hạ ' + r.kills + ' · lọt ' + r.leaks + ' · điểm ' + r.score);
+    }
   }
 }
+if (!ALL) console.log('\n(gợi ý: node balance.mjs --all để thăm dò cả 6 bản đồ)');
 dom.window.close(); process.exit(0);
