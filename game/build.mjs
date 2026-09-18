@@ -8,12 +8,31 @@
  *
  * Dùng:  node game/build.mjs [duong-dan-xuat]     (mặc định: ./game3d.html)
  */
-import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, 'src');
+
+/** Đọc các icon ghi đè: game/icons/<key>.svg → thay cho icon tự vẽ trong ICONS. */
+export function iconOverrides() {
+  const dir = join(HERE, 'icons');
+  if (!existsSync(dir)) return {};
+  const out = {};
+  for (const f of readdirSync(dir)) {
+    if (!f.toLowerCase().endsWith('.svg')) continue;
+    const key = f.slice(0, -4);
+    let svg = readFileSync(join(dir, f), 'utf8');
+    svg = svg
+      .replace(/<\?xml[\s\S]*?\?>/g, '')
+      .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '');
+    const m = svg.match(/<svg[^>]*>([\s\S]*)<\/svg>/i);
+    out[key] = (m ? m[1] : svg).trim();
+  }
+  return out;
+}
 
 /** Tách three.js thành script cổ điển + ghép logic.js/game.js. */
 export function buildParts() {
@@ -35,8 +54,15 @@ window.THREE = { ${pairs.join(',')} };
 
   const logic = readFileSync(join(SRC, 'logic.js'), 'utf8').replace(/^export\s+/gm, '');
   const game = readFileSync(join(SRC, 'game.js'), 'utf8');
+  const overrides = iconOverrides();
+  const overrideLines = Object.keys(overrides).length
+    ? `/* Icon ghi đè từ game/icons/ — thay được bằng icon ngoài (Flaticon…), không cần sửa code. */
+window.__NEON_ICON_OVERRIDES__ = ${JSON.stringify(overrides, null, 0)};
+`
+    : `window.__NEON_ICON_OVERRIDES__ = {};
+`;
   const gameScript = `(function(){ 'use strict';
-const THREE = window.THREE;
+${overrideLines}const THREE = window.THREE;
 /* =========================================================================
  * PHẦN 1/2 — LÕI LOGIC (đường đi, đợt sóng, tháp, kinh tế) — logic.js
  * ========================================================================= */
@@ -72,6 +98,8 @@ function main() {
   console.log('✅ Đã tạo', out);
   console.log('   · three.js  :', kb(Buffer.byteLength(parts.threeScript)));
   console.log('   · logic+game:', kb(Buffer.byteLength(parts.gameScript)));
+  const ov = Object.keys(iconOverrides());
+  console.log('   · icon ghi đè:', ov.length ? ov.join(', ') : '(dùng bộ icon tự vẽ)');
   console.log('   · tổng file :', kb(statSync(out).size));
 }
 

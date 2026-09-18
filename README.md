@@ -26,6 +26,31 @@ npm run game:balance  # bot tự chơi để đo cân bằng độ khó
 
 Chi tiết gameplay, kiến trúc và cách tinh chỉnh: [`game/README.md`](./game/README.md).
 
+## 🗂️ Repo như một hub đa dự án (Arena.ai)
+
+Repo này được dùng như **kho chứa game & dự án thử nghiệm**, theo đúng quy ước **1 dự án = 1 branch**:
+mỗi phiên Arena.ai tự sinh một branch `arena/<id>` — branch đó là "phòng làm việc" riêng của dự án
+(code, lịch sử commit, preview nằm trọn trong đó), nhờ vậy các dự án không giẫm chân nhau.
+Nhánh `main` giữ trang hub và lõi AI Studio dùng chung.
+
+- **Trang hub**: [`projects.html`](./projects.html) — liệt kê mọi dự án, branch, entry, nút mở nhanh; sinh tự động từ [`projects.json`](./projects.json)
+- **CLI quản lý**: `tools/projects.mjs`
+
+```bash
+npm run projects                                        # bảng dự án (kèm branch đang đứng)
+npm run projects:check                                  # kiểm tra branch/entry còn đúng không
+npm run project:new -- "Game bắn máy bay" --type game    # tạo branch proj/<slug> + khung dự án + commit đầu tiên
+npm run hub                                             # sinh lại projects.html từ projects.json
+```
+
+| Dự án | Loại | Branch | Entry |
+|---|---|---|---|
+| AI Studio — Combo Model Workspace | web app | `main` | `index.html` |
+| Neon Defense 3D — Tower Defense | game | `arena/01a0b34c-ai-studio` | `game3d.html` |
+
+> Tạo dự án bằng Arena: mở **phiên Arena mới** cho dự án đó → Arena tự cấp branch riêng, bạn chỉ cần
+> đăng ký nó vào `projects.json` (hoặc chạy `npm run hub` sau khi thêm).
+
 ## ✨ Tính năng chính
 
 ### 1) Tích hợp Provider qua API Key

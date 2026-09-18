@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>De-666 / AI-Studio — Arena.ai Repo Hub</title>
+<style>
+  :root{--bg:#05080f;--panel:rgba(11,17,30,.78);--line:rgba(122,190,255,.16);--line2:rgba(122,190,255,.34);
+    --text:#dce8ff;--dim:#8ea5c9;--cyan:#3ddcff;--mag:#ff4fd8}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(circle at 50% -10%,#101c33,#05080f 60%),var(--bg);color:var(--text);
+    font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:34px 18px 60px;min-height:100vh}
+  .wrap{max-width:1080px;margin:0 auto}
+  header.top{text-align:center;margin-bottom:26px}
+  .kicker{display:inline-block;font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--dim);
+    border:1px solid var(--line2);border-radius:99px;padding:4px 12px;margin-bottom:12px}
+  h1{margin:0 0 8px;font-size:clamp(24px,4vw,38px);letter-spacing:.5px;
+    background:linear-gradient(92deg,var(--cyan),#b98cff 55%,var(--mag));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{color:var(--dim);font-size:13.5px;max-width:760px;margin:0 auto}
+  .stats{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:18px 0 6px}
+  .stat{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:7px 14px;font-size:12.5px}
+  .stat b{color:var(--cyan)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin:22px 0 30px}
+  .card{border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;
+    box-shadow:0 14px 40px rgba(0,0,0,.35);position:relative;overflow:hidden}
+  .card::before{content:'';position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--accent),transparent)}
+  .card header{display:flex;gap:11px;align-items:flex-start}
+  .ico{width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;border-radius:11px;font-size:19px;
+    background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid var(--line2)}
+  .card h3{margin:0 0 4px;font-size:15.5px}
+  .tag{font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--accent);border:1px solid var(--line);
+    border-radius:99px;padding:1px 8px;margin-right:6px}
+  .st{font-size:10.5px;color:var(--c);border:1px solid color-mix(in srgb,var(--c) 40%,transparent);border-radius:99px;padding:1px 8px}
+  .card p{margin:0;color:var(--dim);font-size:13px}
+  .branch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;background:rgba(255,255,255,.035);
+    border:1px solid var(--line);border-radius:10px;padding:6px 9px}
+  .branch .here{color:var(--cyan);font-size:11px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+  .copy{margin-left:auto;background:rgba(255,255,255,.06);border:1px solid var(--line2);color:var(--text);border-radius:8px;
+    padding:2px 7px;cursor:pointer;font-size:12px}
+  .copy:hover{background:rgba(255,255,255,.12)}
+  .acts{display:flex;align-items:center;gap:10px;margin-top:2px}
+  .btn{display:inline-block;text-decoration:none;color:#04121c;font-weight:700;font-size:12.5px;padding:8px 14px;border-radius:10px;
+    background:linear-gradient(135deg,var(--cyan),#7fe9ff)}
+  .btn:hover{filter:brightness(1.08)}
+  .run{color:var(--dim);font-size:11.5px}
+  .howto{border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:18px 20px}
+  .howto h2{margin:0 0 10px;font-size:15px}
+  .howto ol{margin:0 0 12px;padding-left:20px;color:var(--dim);font-size:13px}
+  .howto li{margin-bottom:6px}
+  .howto pre{margin:0;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:11px 13px;overflow:auto;
+    font-size:12px;color:#cfe6ff}
+  .badge{display:inline-block;margin-left:8px;font-size:10.5px;color:var(--mag);border:1px solid color-mix(in srgb,var(--mag) 45%,transparent);
+    border-radius:99px;padding:1px 8px}
+  footer{margin-top:26px;text-align:center;color:#5d719a;font-size:11.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <span class="kicker">Arena.ai · repo hub</span>
+    <h1>De-666 / AI-Studio — Arena.ai Repo Hub</h1>
+    <p class="sub">Repo này là kho chứa game &amp; dự án thử nghiệm. Quy ước: <b>1 dự án = 1 branch</b> — mỗi phiên Arena.ai tự sinh một branch
+      <code>arena/&lt;id&gt;</code> làm "phòng làm việc" riêng cho dự án đó, nên các dự án không giẫm chân nhau.</p>
+    <div class="stats">
+      <div class="stat"><b>2</b> dự án</div>
+      <div class="stat"><b>2</b> branch</div>
+      <div class="stat">branch hiện tại: <b>arena/01a0b34c-ai-studio</b></div>
+      <div class="stat">cập nhật: <b>2026-09-18</b></div>
+    </div>
+  </header>
+
+  <div class="grid">
+  <article class="card" style="--accent:#b98cff">
+    <header>
+      <span class="ico">🖥️</span>
+      <div>
+        <h3>AI Studio — Combo Model Workspace</h3>
+        <span class="tag">webapp</span>
+        <span class="st" style="--c:#5cffa8">đang làm</span>
+      </div>
+    </header>
+    <p>Web app React + Vite: gom nhiều provider AI qua API key, ghép Combo model và tự switch khi hết quota, Chat / Image Studio / Projects.</p>
+    <div class="branch"><code>main</code>
+      <button class="copy" data-branch="main" title="Sao chép tên branch">⧉</button></div>
+    <div class="acts">
+      <a class="btn" href="./index.html">Mở dự án</a>
+      <span class="run"><code>npm run dev</code></span>
+    </div>
+  </article>
+  <article class="card" style="--accent:#3ddcff">
+    <header>
+      <span class="ico">🎮</span>
+      <div>
+        <h3>Neon Defense 3D — Tower Defense</h3>
+        <span class="tag">game</span>
+        <span class="st" style="--c:#3ddcff">đã xong</span>
+      </div>
+    </header>
+    <p>Game tower defense 3D bằng Three.js, đóng gói 1 file HTML chạy offline: 25 đợt, 5 loại tháp × 5 cấp, 8 loại địch (quái vật &amp; sinh vật ngoài hành tinh), 164 test headless.</p>
+    <div class="branch"><code>arena/01a0b34c-ai-studio</code><span class="here">◀ branch hiện tại</span>
+      <button class="copy" data-branch="arena/01a0b34c-ai-studio" title="Sao chép tên branch">⧉</button></div>
+    <div class="acts">
+      <a class="btn" href="./game3d.html">Mở dự án</a>
+      <span class="run"><code>npm run game</code></span>
+    </div>
+  </article>
+  </div>
+
+  <section class="howto">
+    <h2>Tạo dự án mới thế nào?<span class="badge">1 dự án = 1 branch</span></h2>
+    <ol>
+      <li>Mở phiên Arena mới cho dự án mới → Arena tự tạo branch arena/&lt;id&gt; cho phiên đó.</li>
+      <li>Hoặc tạo branch ngay trong máy: npm run project:new -- &quot;Tên dự án&quot; --type game</li>
+      <li>Mỗi dự án nằm ở một thư mục riêng, entry tĩnh (index.html) để mở/preview độc lập.</li>
+      <li>Merge xong thì xoá branch, hoặc giữ lại nếu muốn tiếp tục phát triển dự án đó.</li>
+    </ol>
+    <pre>npm run project:new -- "Game bắn máy bay" --type game   # tạo branch + khung dự án
+npm run projects                                       # xem bảng dự án
+npm run projects:check                                 # kiểm tra branch/entry có thật không
+npm run hub                                            # sinh lại trang này</pre>
+  </section>
+
+  <footer>Sinh tự động từ <code>projects.json</code> · <code>npm run hub</code> · Sinh lại trang này bằng: npm run hub</footer>
+</div>
+<script>
+  document.querySelectorAll('.copy').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const text = b.dataset.branch;
+      try { await navigator.clipboard.writeText(text); b.textContent = '✓'; }
+      catch { window.prompt('Tên branch:', text); }
+      setTimeout(() => (b.textContent = '⧉'), 1200);
+    });
+  });
+</script>
+</body>
+</html>

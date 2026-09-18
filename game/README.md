@@ -48,7 +48,7 @@ Trình duyệt cần bật WebGL. Nếu máy quá yếu, game tự hiện thông
 | ⚡ Trụ Sét | 175 | 22 → 111 | 9.5 → 12 | 1.05 → 1.43 /s | Sét lan 4 → 8 mục tiêu, bắn tức thời |
 | 🎯 Bắn Tỉa | 205 | 110 → 635 | 22 → 28 | 0.5 → 0.61 /s | Tầm cực xa, **xuyên giáp + xuyên 3–7 mục tiêu** |
 
-### 5 loại địch + trùm
+### 8 loại địch (trong đó có nhóm quái vật / sinh vật ngoài hành tinh)
 
 | Địch | Máu gốc | Tốc độ | Giáp | Đặc điểm |
 |---|---|---|---|---|
@@ -56,23 +56,45 @@ Trình duyệt cần bật WebGL. Nếu máy quá yếu, game tự hiện thông
 | ⚡ Tia Chớp | 34 | 5.3 | 0 | Nhanh, khó chặn |
 | 🛡️ Xe Tăng | 240 | 1.85 | 6 | Trâu, lọt lưới mất 3 mạng |
 | 🛸 Drone Bay | 80 | 4.4 | 1 | **Bay theo đường riêng**, chỉ tháp bắn được mục tiêu bay mới hạ nổi |
+| 👽 Sinh Vật Ngoài Hành Tinh | 130 | 3.4 | 2 | Từ đợt 9: cứ ~4.6s **dịch chuyển tức thời** 7.5 ô về phía trước (đang bị làm chậm thì không nhảy được) |
+| 🧟 Quái Vật Đột Biến | 420 | 2.05 | 8 | Từ đợt 12: máu dày, giáp cao, bị hạ thì **tách thành 2 Ấu Trùng** |
+| 🐛 Ấu Trùng | 45 | 4.7 | 0 | Sinh ra từ xác quái vật, chạy rất nhanh, khó chặn nếu hết tháp ở đoạn cuối |
 | 👹 Trùm Máy | 1350 | 1.5 | 10 | Xuất hiện mỗi 5 đợt (1 → 3 con), lọt lưới mất 8 mạng |
 
 ### Cơ chế đáng chú ý
 
+- **Dị năng của quái & dị dạng**: 👽 *dịch chuyển tức thời* (bỏ qua một đoạn đường — nhưng Súng Băng làm chậm là khoá được), 🧟 *tách đàn* (chết sinh ra ấu trùng chạy nhanh), 🛸 *bay* (đi đường riêng trên không).
 - **Giáp giảm theo tỉ lệ** (`armor/(armor+22)`, tối đa −55%) nên tháp sát thương nhỏ vẫn có ích, còn Bắn Tỉa thì bỏ qua hoàn toàn.
 - **Máu địch scale phi tuyến**: từ đợt 15 trở đi nhân thêm hệ số "late" — nửa sau của ván mới thực sự căng.
 - **Kinh tế**: gọi đợt sớm được thưởng vàng (tối đa ~40 vàng/đợt), qua đợt được `40 + 7×đợt`, hạ địch rơi vàng; bán tháp luôn lỗ 38% để tránh lạm phát.
 - **Trạng thái bàn chơi**: 22×16 ô, đường đi 14 khúc uốn lượn, trang trí (đá, tinh thể phát sáng, cây, cột đèn neon, vành núi) chiếm ô nên **không thể xây tràn lan** — phải chọn vị trí.
 - **Không có thư viện ngoài**: UI/âm thanh/hiệu ứng đều tự viết — WebAudio tổng hợp tiếng súng, tiếng nổ, nhạc hiệu thắng/thua (không có file âm thanh).
 
+### 🎨 Bộ icon (tự vẽ, không phụ thuộc CDN)
+
+Mọi icon trong game — 5 loại tháp, 8 loại địch, logo — đều là **SVG tự vẽ** nằm ở hằng `ICONS`
+trong `game/src/game.js` và được render bằng `svgIcon(key, color)` / `renderIcons(root)`.
+Không có ảnh ngoài, không gọi mạng, icon tự lấy màu theo từng loại tháp/địch.
+
+Muốn thay bằng icon tải về (ví dụ **Flaticon** — monster/alien):
+
+```bash
+# 1) tải file .svg, ghi đè vào thư mục icons, GIỮ NGUYÊN tên tệp:
+#    game/icons/alien.svg  ·  game/icons/monster.svg  ·  game/icons/boss.svg …
+#    (giữ fill="currentColor" cho phần nét chính để icon ăn màu theo theme)
+npm run game:build     # 2) build lại là xong
+```
+
+`build.mjs` nhúng mọi tệp `game/icons/*.svg` vào `game3d.html` (biến `window.__NEON_ICON_OVERRIDES__`)
+và ghi đè bộ icon mặc định — xem `game/icons/README.md`.
+
 ### 3 độ khó
 
 | Độ khó | Mạng | Vàng đầu | Máu địch | Vàng nhận | Kết quả đo bằng bot (xem bên dưới) |
 |---|---|---|---|---|---|
 | 🌱 Dễ | 25 | 275 | ×0.80 | ×1.15 | Thắng thoải mái |
-| ⚔️ Thường | 20 | 220 | ×1.00 | ×1.00 | Thắng nếu chơi tốt; 1/3 cuối ván mới thực sự khó |
-| 💀 Khó | 16 | 195 | ×1.32 | ×0.98 | Bot chơi tối ưu thắng sát nút (còn 11/16 mạng); bot chơi "người thường" thua ở đợt cuối |
+| ⚔️ Thường | 20 | 220 | ×1.00 | ×1.00 | Thắng nếu chơi tốt — bot "người thường" về đích với 4/20 mạng, đúng độ căng mong muốn |
+| 💀 Khó | 16 | 195 | ×1.32 | ×0.98 | Bot tối ưu thắng sát nút (còn 11/16 mạng); bot chơi "người thường" thua ở đợt cuối |
 
 ---
 
@@ -86,13 +108,14 @@ game/
 │   ├── game.js         # Engine Three.js: scene/ánh sáng, model tháp & địch, FX hạt, gameplay,
 │   │                   # HUD + menu + input (chuột/bàn phím/cảm ứng), vòng lặp render
 │   └── template.html   # Khung HTML + CSS (giao diện neon), có 2 mốc để nhúng script
+├── icons/              # icon .svg ghi đè (thay bằng icon Flaticon thì bỏ tệp vào đây)
 ├── vendor/
 │   ├── three.module.min.js   # Three.js r160 (bản ESM chính thức, 654 KB)
 │   └── LICENSE-three.txt     # MIT
 ├── build.mjs           # Đóng gói 1 file: three ESM → script cổ điển (IIFE riêng) + logic + game → HTML
 ├── serve.mjs           # Server tĩnh nhỏ để chơi/preview (bind 0.0.0.0)
 └── test/
-    ├── run.mjs         # 140 kiểm tra headless (jsdom + stub WebGL) — npm run game:test
+    ├── run.mjs         # 168 kiểm tra headless (jsdom + stub WebGL) — npm run game:test
     └── balance.mjs     # Bot tự chơi để đo độ khó — npm run game:balance
 ```
 
@@ -106,25 +129,27 @@ nên không xung đột tên biến với code game; code game cũng nằm trong
 ```bash
 npm run game:build      # dựng lại game3d.html từ src/
 cd game/test && npm install && cd ../..   # cài jsdom cho harness (1 lần)
-npm run game:test       # 140 kiểm tra: logic, gameplay, UI, input, fuzz, thắng/thua, rò rỉ mesh
+npm run game:test       # 168 kiểm tra: logic, gameplay, UI, input, fuzz, thắng/thua, rò rỉ mesh
 npm run game:balance    # bot tự chơi 3 độ khó → in kết quả
 ```
 
 Harness chạy `game3d.html` **thật** trong jsdom, chỉ thay `WebGLRenderer` bằng stub (scene graph, gameplay,
-UI, input đều chạy), nên bắt được cả lỗi khởi động lẫn lỗi logic. Ví dụ kết quả gần nhất:
+UI, input đều chạy), nên bắt được cả lỗi khởi động lẫn lỗi logic: đường đi, công thức đợt sóng, 5 loại tháp,
+dị năng quái/dị dạng, kinh tế, thao tác chuột–bàn phím–cảm ứng, fuzz 2600 hành động, ván thắng & ván thua,
+và cả kiểm tra rò rỉ mesh. Ví dụ kết quả gần nhất:
 
 ```
-Kết quả: 140 kiểm tra đạt, 0 thất bại
+Kết quả: 168 kiểm tra đạt, 0 thất bại · 4.2s
 
 === KẾT QUẢ THĂM DÒ CÂN BẰNG ===
-· bot tối ưu (không giới hạn)
+· bot tối ưu (không giới hạn số tháp)
   easy    → đợt 25/25 · victory · mạng 25 · lọt 0
   normal  → đợt 25/25 · victory · mạng 20 · lọt 0
   hard    → đợt 25/25 · victory · mạng 11 · lọt 5
-· người chơi thật (~26 tháp, cấp ≤3)
+· người chơi thật (~26 tháp, cấp ≤3, không gọi đợt sớm)
   easy    → đợt 25/25 · victory · mạng 25 · lọt 0
-  normal  → đợt 25/25 · victory · mạng 20 · lọt 0
-  hard    → đợt 25/25 · over    · mạng  0 · lọt 8
+  normal  → đợt 25/25 · victory · mạng  4 · lọt 2   ← căng dần ở nửa sau ván
+  hard    → đợt 25/25 · over    · mạng  0 · lọt 9
 ```
 
 ## 🔧 Muốn tinh chỉnh?

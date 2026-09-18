@@ -1,0 +1,9 @@
+<!-- Icon địch "Sinh Vật Ngoài Hành Tinh" — bản tự vẽ, có thể GHI ĐÈ bằng icon tải từ Flaticon:
+     tải file về, ghi đè chính tệp này (giữ tên alien.svg), rồi chạy: npm run game:build
+     Lưu ý giữ thuộc tính fill="currentColor" để icon đổi màu theo trạng thái trong game. -->
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M12 3.4c4.9 0 8.4 3.5 8.4 7.7 0 5-4.4 9.5-8.4 9.5s-8.4-4.5-8.4-9.5c0-4.2 3.5-7.7 8.4-7.7z" fill="currentColor" opacity=".92"/>
+  <ellipse cx="8.7" cy="11.7" rx="2.6" ry="1.7" transform="rotate(-22 8.7 11.7)" fill="#0b1020"/>
+  <ellipse cx="15.3" cy="11.7" rx="2.6" ry="1.7" transform="rotate(22 15.3 11.7)" fill="#0b1020"/>
+  <path d="M9.2 3l-.8-2.4M14.8 3l.8-2.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+</svg>

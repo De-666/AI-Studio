@@ -122,6 +122,8 @@ T('1. Khởi động & dựng cảnh 3D', () => {
   eq(S.phase, 'menu', 'trạng thái ban đầu là menu');
   ok(!!doc.getElementById('btnStart'), 'menu chính có nút Bắt đầu');
   eq(doc.querySelectorAll('.card[data-tower]').length, 5, 'thanh dưới có đủ 5 loại tháp');
+  eq(doc.querySelectorAll('.card .ic svg').length, 5, '5 thẻ tháp hiển thị icon SVG tự vẽ (không cần CDN)');
+  ok(!!doc.querySelector('.brand .logo svg'), 'logo thương hiệu dùng icon SVG');
   eq(doc.querySelectorAll('.ctrl').length, 5, 'có 5 nút điều khiển góc phải');
   gt(countMeshes(NEON.scene), 200, `cảnh 3D có ${countMeshes(NEON.scene)} đối tượng (địa hình, đường, trang trí, căn cứ…)`);
   ok(NEON.scene.children.length >= 6, 'scene có đủ nhóm đối tượng (ánh sáng, sao, thế giới…)');
@@ -151,6 +153,13 @@ T('2. Lõi logic: đường đi, đợt sóng, tháp, kinh tế', () => {
   ok(NEON.buildWave(5, NEON.DIFFICULTIES.normal).summary.some((g) => g.type === 'boss'), 'đợt 5 có trùm');
   ok(!NEON.buildWave(4, NEON.DIFFICULTIES.normal).summary.some((g) => g.type === 'boss'), 'đợt 4 chưa có trùm');
   ok(NEON.buildWave(7, NEON.DIFFICULTIES.normal).summary.some((g) => g.air), 'đợt 7 bắt đầu có drone bay');
+  ok(!NEON.buildWave(8, NEON.DIFFICULTIES.normal).summary.some((g) => g.type === 'alien'), 'đợt 8 chưa có sinh vật ngoài hành tinh');
+  ok(NEON.buildWave(9, NEON.DIFFICULTIES.normal).summary.some((g) => g.type === 'alien'), 'đợt 9 xuất hiện sinh vật ngoài hành tinh');
+  ok(!NEON.buildWave(11, NEON.DIFFICULTIES.normal).summary.some((g) => g.type === 'monster'), 'đợt 11 chưa có quái vật đột biến');
+  ok(NEON.buildWave(12, NEON.DIFFICULTIES.normal).summary.some((g) => g.type === 'monster'), 'đợt 12 xuất hiện quái vật đột biến');
+  const sum20 = NEON.buildWave(20, NEON.DIFFICULTIES.normal).summary.find((g) => g.type === 'alien');
+  ok(!!sum20.color && sum20.color.startsWith('#'), 'summary của địch có màu để vẽ icon');
+  ok(!!sum20.note, 'summary của địch có ghi chú dị năng');
 
   gt(NEON.enemyStats('grunt', 10, NEON.DIFFICULTIES.hard).hp, NEON.enemyStats('grunt', 10, NEON.DIFFICULTIES.normal).hp, 'độ khó Khó làm địch trâu hơn');
   gt(NEON.enemyStats('grunt', 10, NEON.DIFFICULTIES.normal).hp, NEON.enemyStats('grunt', 10, NEON.DIFFICULTIES.easy).hp, 'độ khó Dễ làm địch yếu hơn');
@@ -519,7 +528,73 @@ T('12. Thua cuộc khi không phòng thủ', () => {
   eq(S.lives, NEON.DIFFICULTIES.hard.lives, 'ván mới dùng độ khó vừa chọn');
 });
 
-T('13. Vòng lặp render & dọn dẹp', () => {
+T('13. Địch monster / alien: icon SVG, dịch chuyển tức thời, tách đàn', () => {
+  // --- icon SVG tự vẽ có đủ cho mọi loại tháp & địch
+  const need = ['logo', 'gun', 'cannon', 'frost', 'tesla', 'sniper', 'alien', 'monster', 'spawn', 'grunt', 'runner', 'tank', 'flyer', 'boss'];
+  const missing = need.filter((k) => !NEON.ICONS[k]);
+  ok(missing.length === 0, 'bộ icon SVG có đủ ' + need.length + ' icon (tháp + địch)', 'thiếu: ' + missing.join(', '));
+  const alienSvg = NEON.svgIcon('alien', '#7cf9d0');
+  ok(alienSvg.startsWith('<svg') && alienSvg.includes('</svg>'), 'svgIcon() trả về thẻ <svg> hợp lệ');
+  ok(NEON.svgIcon('khong-co-icon-nay').includes('<svg'), 'icon thiếu không làm vỡ giao diện (có icon dự phòng)');
+  // cơ chế ghi đè icon bằng file game/icons/*.svg (đóng gói lúc build)
+  ok(!!win.__NEON_ICON_OVERRIDES__, 'bundle có kênh ghi đè icon window.__NEON_ICON_OVERRIDES__');
+  const ovKeys = Object.keys(win.__NEON_ICON_OVERRIDES__ || {});
+  ok(ovKeys.includes('alien') && ovKeys.includes('monster'), 'icon alien/monster được nạp từ game/icons/*.svg', ovKeys.join(','));
+  ok(NEON.ICONS.alien === win.__NEON_ICON_OVERRIDES__.alien, 'icon ghi đè được áp vào bảng ICONS của game');
+  ok(!NEON.ICONS.alien.includes('<svg'), 'ICONS chỉ giữ phần thân SVG (không lồng thẻ <svg>) để nhận màu currentColor');
+
+  NEON.startGame('normal');
+  S.wave = 19; S.phase = 'build'; S.buildTimer = 15;
+  NEON.updateWavePanel();                 // dựng lại bảng đợt kế tiếp (đợt 20)
+  const panel = doc.getElementById('wavepanel').innerHTML;
+  ok(panel.includes('data-ic="alien"') && panel.includes('data-ic="monster"'), 'bảng đợt kế tiếp hiển thị icon alien & monster');
+  gt(doc.querySelectorAll('#wavepanel svg').length, 3, 'bảng đợt render icon SVG cho từng loại địch');
+  ok(panel.includes('dịch chuyển') && panel.includes('tách'), 'bảng đợt ghi chú rõ dị năng của quái/dị dạng');
+
+  // --- 👽 dịch chuyển tức thời: đi nhanh hơn hẳn tốc độ thường
+  NEON.startGame('normal');
+  S.paused = false;
+  const alien = NEON.spawnEnemy('alien', 9);
+  alien.dist = 20; alien.blinkT = 0;
+  const t0 = S.sim;
+  step(1 / 30, 30 * 6);                       // 6 giây
+  const travelled = alien.dist - 20;
+  const plain = alien.speed * (S.sim - t0);
+  S.paused = true;
+  gt(travelled, plain * 1.25, `alien dịch chuyển xa hơn đi thường (${travelled.toFixed(1)} > ${plain.toFixed(1)} ô)`);
+  eq(NEON.ENEMIES.alien.blink, 7.5, 'đúng số ô mỗi lần dịch chuyển');
+
+  // --- bị làm chậm thì không dịch chuyển được
+  NEON.startGame('normal');
+  S.paused = false;
+  const a2 = NEON.spawnEnemy('alien', 9);
+  a2.dist = 20; a2.blinkT = 0;
+  a2.slowUntil = S.sim + 999; a2.slowAmt = 0.5;
+  const d0 = a2.dist, t1 = S.sim;
+  step(1 / 30, 30 * 6);
+  S.paused = true;
+  eq(a2.blinkT, 0, 'khi đang bị làm chậm, alien không tích luỹ dịch chuyển');
+  lt(a2.dist - d0, a2.speed * 0.6 * (S.sim - t1) * 1.2, 'đang bị làm chậm thì không nhảy tắt đường');
+
+  // --- 🧟 quái vật đột biến: chết tách thành 2 ấu trùng
+  NEON.startGame('normal');
+  S.paused = false;
+  NEON.spawnEnemy('grunt', 5);
+  const mon = NEON.spawnEnemy('monster', 12);
+  const beforeCount = S.enemies.length;
+  NEON.damageEnemy(mon, 99999, {});
+  const spawned = S.enemies.filter((e) => e.type === 'spawn');
+  eq(spawned.length, 2, 'quái vật bị hạ tách thành đúng 2 ấu trùng');
+  eq(S.enemies.length, beforeCount - 1 + 2, 'số địch trên bản đồ cập nhật đúng sau khi tách');
+  ok(spawned.every((e) => e.hp > 0 && e.maxHp === e.hp), 'ấu trùng mới có máu hợp lệ');
+  gt(spawned[0].speed, mon.speed, 'ấu trùng chạy nhanh hơn quái vật mẹ');
+  ok(S.enemies.every((e) => e.alive), 'ấu trùng được thêm vào danh sách đang sống');
+  step(1 / 30, 30);
+  ok(S.enemies.every((e) => Number.isFinite(e.pos.x)), 'ấu trùng di chuyển không lỗi');
+  S.paused = true;
+});
+
+T('14. Vòng lặp render & dọn dẹp', () => {
   NEON.startGame('normal');
   const r0 = NEON.renderer.__renders;
   NEON.frame(1000);

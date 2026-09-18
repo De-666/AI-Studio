@@ -164,6 +164,24 @@ export const ENEMIES = {
   tank:   { id: 'tank',   name: 'Xe Tăng',     icon: '🛡️', hp: 240,  speed: 1.85, armor: 6,  reward: 20,  score: 30,  leak: 3,  air: false, color: 0xc084fc, scale: 1.45, barW: 1.4 },
   flyer:  { id: 'flyer',  name: 'Drone Bay',   icon: '🛸', hp: 80,   speed: 4.4,  armor: 1,  reward: 13,  score: 20,  leak: 2,  air: true,  color: 0xff8ad4, scale: 0.95, barW: 1.0 },
   boss:   { id: 'boss',   name: 'Trùm Máy',    icon: '👹', hp: 1350, speed: 1.5,  armor: 10, reward: 200, score: 400, leak: 8,  air: false, color: 0xff5470, scale: 2.10, barW: 2.4 },
+  // ------------------------- nhóm monster / alien -------------------------
+  alien:  {
+    id: 'alien', name: 'Sinh Vật Ngoài Hành Tinh', icon: '👽', hp: 130, speed: 3.4, armor: 2, reward: 18, score: 28, leak: 2,
+    air: false, color: 0x7cf9d0, scale: 1.12, barW: 1.1,
+    blink: 7.5, blinkCd: 4.6,                    // cứ ~4.6s lại dịch chuyển tức thời về phía trước
+    note: 'Dịch chuyển tức thời — làm chậm để giữ nó trong tầm bắn',
+  },
+  monster: {
+    id: 'monster', name: 'Quái Vật Đột Biến', icon: '🧟', hp: 420, speed: 2.05, armor: 8, reward: 34, score: 48, leak: 4,
+    air: false, color: 0xa6ff5c, scale: 1.42, barW: 1.3,
+    split: { type: 'spawn', count: 2 },          // bị hạ sẽ tách thành 2 ấu trùng
+    note: 'Bị hạ sẽ tách thành 2 ấu trùng nhanh',
+  },
+  spawn: {
+    id: 'spawn', name: 'Ấu Trùng', icon: '🐛', hp: 45, speed: 4.7, armor: 0, reward: 4, score: 6, leak: 1,
+    air: false, color: 0xd8ff8a, scale: 0.72, barW: 0.8,
+    note: 'Sinh ra từ xác quái vật, chạy rất nhanh',
+  },
 };
 
 /** Chỉ số kẻ địch đã scale theo đợt + độ khó. */
@@ -207,6 +225,8 @@ export function buildWave(n, diff = DIFFICULTIES.normal) {
   if (n >= 3) add('runner', 2 + n * 0.7, 0.42, 2.6);
   if (n >= 5) add('tank', 1 + (n - 4) / 2.5, 1.05, 5.4);
   if (n >= 7) add('flyer', 2 + n * 0.45, 0.5, 8.4);
+  if (n >= 9) add('alien', 1 + Math.floor((n - 8) * 0.45), 0.95, 6.6);
+  if (n >= 12) add('monster', 1 + Math.floor((n - 11) / 3), 1.7, 10.5);
   if (n % 5 === 0) add('boss', 1 + Math.floor(n / 12), 2.4, 12);
 
   const schedule = [];
@@ -218,7 +238,11 @@ export function buildWave(n, diff = DIFFICULTIES.normal) {
   const last = schedule.length ? schedule[schedule.length - 1].t : 0;
   const summary = groups.map((g) => {
     const st = enemyStats(g.type, n, diff);
-    return { type: g.type, name: st.name, icon: st.icon, count: g.count, hpEach: st.hp, air: st.air };
+    return {
+      type: g.type, name: st.name, icon: st.icon, count: g.count, hpEach: st.hp, air: st.air,
+      color: '#' + st.color.toString(16).padStart(6, '0'), note: st.note || '',
+      blink: !!st.blink, split: !!st.split,
+    };
   });
 
   return {

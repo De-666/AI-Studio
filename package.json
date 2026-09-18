@@ -10,7 +10,11 @@
     "game": "node game/serve.mjs 5173",
     "game:build": "node game/build.mjs",
     "game:test": "node game/test/run.mjs",
-    "game:balance": "node game/test/balance.mjs"
+    "game:balance": "node game/test/balance.mjs",
+    "projects": "node tools/projects.mjs list",
+    "projects:check": "node tools/projects.mjs check",
+    "project:new": "node tools/projects.mjs new",
+    "hub": "node tools/projects.mjs hub"
   },
   "dependencies": {
     "react": "^18.3.1",

@@ -55,7 +55,9 @@ kbd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;padding:1px
 .wavebar>i{position:absolute;inset:0;width:0%;border-radius:99px;
   background:linear-gradient(90deg,var(--cyan),var(--violet),var(--mag));box-shadow:0 0 12px rgba(61,220,255,.6);transition:width .18s}
 
-.side{position:absolute;right:10px;top:76px;width:296px;display:flex;flex-direction:column;gap:9px}
+.side{position:absolute;right:10px;top:76px;width:308px;display:flex;flex-direction:column;gap:9px}
+#inspector{max-height:50vh;overflow:auto;scrollbar-width:thin}
+#wavepanel{max-height:calc(100vh - 300px);overflow:auto;scrollbar-width:thin}
 .panel{padding:12px;border-radius:var(--r);background:var(--panel);border:1px solid var(--line);
   box-shadow:var(--sh);backdrop-filter:blur(10px)}
 .panel h3{margin:0 0 9px;font-size:12px;letter-spacing:.9px;text-transform:uppercase;color:var(--dim);font-weight:700}
@@ -77,8 +79,16 @@ kbd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;padding:1px
 .btn + .btn{margin-top:7px}
 .enemylist{display:flex;flex-direction:column;gap:3px;margin-bottom:9px}
 .enemy{display:flex;align-items:center;gap:7px;font-size:12px;padding:3px 6px;border-radius:8px;background:rgba(255,255,255,.03)}
-.enemy .n{flex:1;color:var(--text)} .enemy .c{color:var(--dim);font-weight:700}
+.enemy .n{flex:1;min-width:0;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.enemy .c{color:var(--dim);font-weight:700;font-size:11.5px}
 .enemy.air .n::after{content:' ✈';color:var(--mag);font-size:10px}
+.enemy .eic{display:grid;place-items:center;width:20px;height:20px;flex:0 0 20px;border-radius:6px;
+  border:1px solid var(--line2);background:rgba(255,255,255,.05)}
+.enemy .eic svg{width:13px;height:13px}
+.enemy .tag{font-size:9.5px;padding:1px 6px;border-radius:99px;background:rgba(255,255,255,.06);
+  border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.enemy .c{white-space:nowrap}
+.note{font-size:10.5px;color:#8ea5c9;padding:2px 6px 5px 32px;line-height:1.45}
 .stars{color:var(--gold);letter-spacing:1px;font-size:12px}
 
 .bottombar{position:absolute;left:10px;right:10px;bottom:10px;display:flex;gap:10px;align-items:flex-end}
@@ -87,7 +97,11 @@ kbd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;padding:1px
 .card{position:relative;flex:0 0 auto;width:92px;padding:8px 7px 7px;border-radius:12px;cursor:pointer;text-align:center;
   background:rgba(255,255,255,.035);border:1px solid var(--line);transition:.15s}
 .card:hover{transform:translateY(-3px);border-color:var(--line2);background:rgba(255,255,255,.07)}
-.card .ic{font-size:19px;line-height:1;filter:drop-shadow(0 0 8px currentColor)}
+.card .ic{font-size:19px;line-height:1;filter:drop-shadow(0 0 8px currentColor);height:26px}
+.card .ic.has-ic{font-size:0}
+.card .ic svg{width:26px;height:26px;display:block;margin:0 auto}
+.brand .logo.has-ic{font-size:0}
+.brand .logo svg{width:19px;height:19px;filter:drop-shadow(0 0 7px rgba(61,220,255,.85))}
 .card .nm{font-size:10.5px;font-weight:700;margin-top:5px;line-height:1.15;height:26px;display:grid;place-items:center}
 .card .cost{font-size:11.5px;font-weight:800;color:var(--gold);margin-top:2px}
 .card .hk{position:absolute;top:4px;left:5px}
@@ -163,7 +177,7 @@ kbd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;padding:1px
   <div id="hud">
     <div class="topbar">
       <div class="brand glass">
-        <span class="logo">◈</span>
+        <span class="logo" data-ic="logo">◈</span>
         <div><b>NEON DEFENSE 3D</b><small>Phòng thủ tinh cầu · Three.js</small></div>
       </div>
       <div class="stats" id="stats"></div>
