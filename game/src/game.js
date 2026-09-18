@@ -756,7 +756,9 @@ function makeBar(w, color) {
 
 function buildEnemyMesh(st) {
   const g = new THREE.Group();          // chỉ giữ vị trí
+  g.name = 'enemy:' + st.id;
   const inner = new THREE.Group();      // xoay theo hướng đi
+  inner.name = 'enemy-body';
   g.add(inner);
   const body = smat(st.color, { metal: 0.5, rough: 0.45, emissive: st.color, ei: 0.26 });
   const dark = smat(0x121824, { metal: 0.65, rough: 0.5 });
@@ -866,6 +868,15 @@ function buildEnemyMesh(st) {
     inner.add(part(GEO.sphLo, eye, { s: [0.055, 0.055, 0.055], p: [0.1, 0.96, 0.32], shadow: false }));
   }
 
+  // vòng sáng dưới chân: giúp nhận ra địch ngay trên nền tối (bay thì để vòng mờ dưới mặt đất)
+  const marker = new THREE.Mesh(GEO.disc, bmat(st.color, st.air ? 0.15 : 0.24, true));
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.y = st.air ? 0.07 : 0.04;
+  marker.scale.set(st.air ? 0.55 : 0.66, st.air ? 0.55 : 0.66, 1);
+  marker.castShadow = false;
+  marker.name = 'enemy-marker';
+  g.add(marker);
+
   const bar = makeBar(1.05, st.color);
   bar.position.y = st.air ? 1.1 : (st.id === 'boss' ? 3.5 : st.id === 'tank' ? 1.75 : 1.4);
   g.add(bar);
@@ -897,6 +908,7 @@ function spawnEnemy(type, wave, opts = {}) {
   e.dist = opts.fromDist || 0;
   e.pos.set(start.x, e.baseY, start.z);
   e.g.position.copy(e.pos);
+  world.add(e.g);        // ⚠️ bắt buộc: thiếu dòng này thì địch vẫn chạy trong logic nhưng VÔ HÌNH trên bản đồ
   S.enemies.push(e);
 
   if (!opts.silent) {
@@ -1043,6 +1055,7 @@ function canBuild(gx, gz) {
 function makeTower(typeId, gx, gz, level = 1) {
   const def = towerDef(typeId);
   const group = buildTowerModel(typeId);
+  group.name = 'tower:' + typeId;
   group.position.set(worldX(gx), 0.02, worldZ(gz));
   world.add(group);
   const t = {
@@ -1240,6 +1253,7 @@ function updateTowers(dt) {
 function spawnProjectile(o) {
   const geo = o.type === 'cannon' ? GEO.sphLo : GEO.oct;
   const m = new THREE.Mesh(geo, glowMat(o.color, 0.95));
+  m.name = 'projectile:' + o.type;
   m.scale.setScalar(o.size);
   m.position.copy(o.from);
   m.castShadow = false;
@@ -1702,7 +1716,7 @@ function showMenu() {
         <button class="btn" id="btnStart">▶️ Bắt đầu phòng thủ</button>
         <button class="btn ghost" id="btnHelp">📖 Xem hướng dẫn</button>
       </div>
-      <div class="foot">Đồng độ khó đã chọn có thể đổi lại ở menu này · Nhấn <b>Space</b> để vào trận nhanh</div>
+      <div class="foot">Đồng độ khó đã chọn có thể đổi lại ở menu này · Nhấn <b>Space</b> để vào trận nhanh · Bản dựng: <b>${(window.__NEON_BUILD__ || 'dev')}</b></div>
     </div>`, 'start');
 
   el.overlay.querySelectorAll('.diff').forEach((node) => {
@@ -2185,6 +2199,7 @@ function boot() {
     updateCards(); updateWavePanel(); updateInspector(true); updateHUD(true); updateControls();
     window.addEventListener('resize', resize);
     requestAnimationFrame(frame);
+    console.log('%c🎮 Neon Defense 3D', 'color:#3ddcff;font-weight:700', '· bản dựng', window.__NEON_BUILD__ || 'dev');
     window.NEON = {
       S, TOWERS, ENEMIES, DIFFICULTIES, GRID, TOTAL_WAVES, MAX_LEVEL, BUILD_TIME,
       startGame, startWave, placeTower, upgradeTower, sellTower, buildWave, towerStats,
@@ -2193,6 +2208,7 @@ function boot() {
       enemyStatsOf: enemyStats, applyArmor, waveBonus, callBonus, waveThreat, stars, fmt,
       scene, camera, renderer, CAM, FX, blocked, towerAt, basePos, portalObj, baseObj,
       ICONS, svgIcon, renderIcons, TILE, updateWavePanel, updateInspector, updateCards, updateHUD, renderIconsIn: renderIcons,
+      world, countInScene: (prefix) => { let n = 0; scene.traverse((o) => { if (o.name && o.name.startsWith(prefix)) n++; }); return n; },
     };
     showMenu();
   } catch (err) {

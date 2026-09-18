@@ -61,7 +61,9 @@ window.__NEON_ICON_OVERRIDES__ = ${JSON.stringify(overrides, null, 0)};
 `
     : `window.__NEON_ICON_OVERRIDES__ = {};
 `;
+  const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
   const gameScript = `(function(){ 'use strict';
+window.__NEON_BUILD__ = ${JSON.stringify(stamp)};
 ${overrideLines}const THREE = window.THREE;
 /* =========================================================================
  * PHẦN 1/2 — LÕI LOGIC (đường đi, đợt sóng, tháp, kinh tế) — logic.js
@@ -77,7 +79,7 @@ ${game}
     if (/<\/script/i.test(code)) throw new Error(`Nội dung "${name}" chứa chuỗi "</script" — không thể nhúng vào HTML`);
     if (/<!--/.test(code)) throw new Error(`Nội dung "${name}" chứa "<!--" — không thể nhúng vào HTML`);
   }
-  return { threeScript, gameScript };
+  return { threeScript, gameScript, stamp };
 }
 
 /** Ghép template + các phần đã đóng gói. `extra` chèn ngay trước script game (dùng cho test). */
@@ -99,7 +101,9 @@ function main() {
   console.log('   · three.js  :', kb(Buffer.byteLength(parts.threeScript)));
   console.log('   · logic+game:', kb(Buffer.byteLength(parts.gameScript)));
   const ov = Object.keys(iconOverrides());
+  void 0;
   console.log('   · icon ghi đè:', ov.length ? ov.join(', ') : '(dùng bộ icon tự vẽ)');
+  console.log('   · bản dựng   :', parts.stamp);
   console.log('   · tổng file :', kb(statSync(out).size));
 }
 

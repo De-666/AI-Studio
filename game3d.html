@@ -218,6 +218,7 @@ window.THREE = { ACESFilmicToneMapping:nt,AddEquation:M,AddOperation:K,AdditiveA
 
 <!-- Toàn bộ logic game (path/wave/tower + engine Three.js + giao diện) -->
 <script>(function(){ 'use strict';
+window.__NEON_BUILD__ = "2026-09-18 07:43 UTC";
 /* Icon ghi đè từ game/icons/ — thay được bằng icon ngoài (Flaticon…), không cần sửa code. */
 window.__NEON_ICON_OVERRIDES__ = {"alien":"<path d=\"M12 3.4c4.9 0 8.4 3.5 8.4 7.7 0 5-4.4 9.5-8.4 9.5s-8.4-4.5-8.4-9.5c0-4.2 3.5-7.7 8.4-7.7z\" fill=\"currentColor\" opacity=\".92\"/>\n  <ellipse cx=\"8.7\" cy=\"11.7\" rx=\"2.6\" ry=\"1.7\" transform=\"rotate(-22 8.7 11.7)\" fill=\"#0b1020\"/>\n  <ellipse cx=\"15.3\" cy=\"11.7\" rx=\"2.6\" ry=\"1.7\" transform=\"rotate(22 15.3 11.7)\" fill=\"#0b1020\"/>\n  <path d=\"M9.2 3l-.8-2.4M14.8 3l.8-2.4\" stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linecap=\"round\"/>","monster":"<path d=\"M4.6 20.6c-1.5-3.5-.5-6.7 1.4-8.9C4.2 8.6 5.4 4.4 8.7 3.3c1.7-.6 3.3-.1 4.7.9 1.2-.7 3.1-.7 4.6.2 3.1 1.9 3.7 6.2 1.9 9.1 1.6 2.2 2 5.1.7 7.1z\" fill=\"currentColor\" opacity=\".9\"/>\n  <path d=\"M6.5 6.3 4.3 2.6l3.8 1.5zM17.5 6.3l2.2-3.7-3.8 1.5z\" fill=\"currentColor\"/>\n  <circle cx=\"9.5\" cy=\"12.2\" r=\"1.6\" fill=\"#0b1020\"/>\n  <circle cx=\"14.5\" cy=\"12.2\" r=\"1.6\" fill=\"#0b1020\"/>\n  <path d=\"M9.4 16.6c1.7 1.4 3.5 1.4 5.2 0\" stroke=\"#0b1020\" stroke-width=\"1.2\" fill=\"none\" stroke-linecap=\"round\"/>"};
 const THREE = window.THREE;
@@ -1267,7 +1268,9 @@ function makeBar(w, color) {
 
 function buildEnemyMesh(st) {
   const g = new THREE.Group();          // chỉ giữ vị trí
+  g.name = 'enemy:' + st.id;
   const inner = new THREE.Group();      // xoay theo hướng đi
+  inner.name = 'enemy-body';
   g.add(inner);
   const body = smat(st.color, { metal: 0.5, rough: 0.45, emissive: st.color, ei: 0.26 });
   const dark = smat(0x121824, { metal: 0.65, rough: 0.5 });
@@ -1377,6 +1380,15 @@ function buildEnemyMesh(st) {
     inner.add(part(GEO.sphLo, eye, { s: [0.055, 0.055, 0.055], p: [0.1, 0.96, 0.32], shadow: false }));
   }
 
+  // vòng sáng dưới chân: giúp nhận ra địch ngay trên nền tối (bay thì để vòng mờ dưới mặt đất)
+  const marker = new THREE.Mesh(GEO.disc, bmat(st.color, st.air ? 0.15 : 0.24, true));
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.y = st.air ? 0.07 : 0.04;
+  marker.scale.set(st.air ? 0.55 : 0.66, st.air ? 0.55 : 0.66, 1);
+  marker.castShadow = false;
+  marker.name = 'enemy-marker';
+  g.add(marker);
+
   const bar = makeBar(1.05, st.color);
   bar.position.y = st.air ? 1.1 : (st.id === 'boss' ? 3.5 : st.id === 'tank' ? 1.75 : 1.4);
   g.add(bar);
@@ -1408,6 +1420,7 @@ function spawnEnemy(type, wave, opts = {}) {
   e.dist = opts.fromDist || 0;
   e.pos.set(start.x, e.baseY, start.z);
   e.g.position.copy(e.pos);
+  world.add(e.g);        // ⚠️ bắt buộc: thiếu dòng này thì địch vẫn chạy trong logic nhưng VÔ HÌNH trên bản đồ
   S.enemies.push(e);
 
   if (!opts.silent) {
@@ -1554,6 +1567,7 @@ function canBuild(gx, gz) {
 function makeTower(typeId, gx, gz, level = 1) {
   const def = towerDef(typeId);
   const group = buildTowerModel(typeId);
+  group.name = 'tower:' + typeId;
   group.position.set(worldX(gx), 0.02, worldZ(gz));
   world.add(group);
   const t = {
@@ -1751,6 +1765,7 @@ function updateTowers(dt) {
 function spawnProjectile(o) {
   const geo = o.type === 'cannon' ? GEO.sphLo : GEO.oct;
   const m = new THREE.Mesh(geo, glowMat(o.color, 0.95));
+  m.name = 'projectile:' + o.type;
   m.scale.setScalar(o.size);
   m.position.copy(o.from);
   m.castShadow = false;
@@ -2213,7 +2228,7 @@ function showMenu() {
         <button class="btn" id="btnStart">▶️ Bắt đầu phòng thủ</button>
         <button class="btn ghost" id="btnHelp">📖 Xem hướng dẫn</button>
       </div>
-      <div class="foot">Đồng độ khó đã chọn có thể đổi lại ở menu này · Nhấn <b>Space</b> để vào trận nhanh</div>
+      <div class="foot">Đồng độ khó đã chọn có thể đổi lại ở menu này · Nhấn <b>Space</b> để vào trận nhanh · Bản dựng: <b>${(window.__NEON_BUILD__ || 'dev')}</b></div>
     </div>`, 'start');
 
   el.overlay.querySelectorAll('.diff').forEach((node) => {
@@ -2696,6 +2711,7 @@ function boot() {
     updateCards(); updateWavePanel(); updateInspector(true); updateHUD(true); updateControls();
     window.addEventListener('resize', resize);
     requestAnimationFrame(frame);
+    console.log('%c🎮 Neon Defense 3D', 'color:#3ddcff;font-weight:700', '· bản dựng', window.__NEON_BUILD__ || 'dev');
     window.NEON = {
       S, TOWERS, ENEMIES, DIFFICULTIES, GRID, TOTAL_WAVES, MAX_LEVEL, BUILD_TIME,
       startGame, startWave, placeTower, upgradeTower, sellTower, buildWave, towerStats,
@@ -2704,6 +2720,7 @@ function boot() {
       enemyStatsOf: enemyStats, applyArmor, waveBonus, callBonus, waveThreat, stars, fmt,
       scene, camera, renderer, CAM, FX, blocked, towerAt, basePos, portalObj, baseObj,
       ICONS, svgIcon, renderIcons, TILE, updateWavePanel, updateInspector, updateCards, updateHUD, renderIconsIn: renderIcons,
+      world, countInScene: (prefix) => { let n = 0; scene.traverse((o) => { if (o.name && o.name.startsWith(prefix)) n++; }); return n; },
     };
     showMenu();
   } catch (err) {

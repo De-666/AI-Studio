@@ -115,7 +115,7 @@ game/
 ├── build.mjs           # Đóng gói 1 file: three ESM → script cổ điển (IIFE riêng) + logic + game → HTML
 ├── serve.mjs           # Server tĩnh nhỏ để chơi/preview (bind 0.0.0.0)
 └── test/
-    ├── run.mjs         # 168 kiểm tra headless (jsdom + stub WebGL) — npm run game:test
+    ├── run.mjs         # 251 kiểm tra headless (jsdom + stub WebGL) — npm run game:test
     └── balance.mjs     # Bot tự chơi để đo độ khó — npm run game:balance
 ```
 
@@ -129,7 +129,7 @@ nên không xung đột tên biến với code game; code game cũng nằm trong
 ```bash
 npm run game:build      # dựng lại game3d.html từ src/
 cd game/test && npm install && cd ../..   # cài jsdom cho harness (1 lần)
-npm run game:test       # 168 kiểm tra: logic, gameplay, UI, input, fuzz, thắng/thua, rò rỉ mesh
+npm run game:test       # 251 kiểm tra: logic, gameplay, UI, input, fuzz, thắng/thua, rò rỉ mesh
 npm run game:balance    # bot tự chơi 3 độ khó → in kết quả
 ```
 
@@ -139,7 +139,7 @@ dị năng quái/dị dạng, kinh tế, thao tác chuột–bàn phím–cảm 
 và cả kiểm tra rò rỉ mesh. Ví dụ kết quả gần nhất:
 
 ```
-Kết quả: 168 kiểm tra đạt, 0 thất bại · 4.2s
+Kết quả: 251 kiểm tra đạt, 0 thất bại · 4.2s
 
 === KẾT QUẢ THĂM DÒ CÂN BẰNG ===
 · bot tối ưu (không giới hạn số tháp)
@@ -151,6 +151,20 @@ Kết quả: 168 kiểm tra đạt, 0 thất bại · 4.2s
   normal  → đợt 25/25 · victory · mạng  4 · lọt 2   ← căng dần ở nửa sau ván
   hard    → đợt 25/25 · over    · mạng  0 · lọt 9
 ```
+
+## 🐞 Lỗi đã gặp & cách phòng ngừa
+
+| Lỗi | Triệu chứng | Nguyên nhân & cách sửa |
+|---|---|---|
+| Địch vô hình | Tháp vẫn tự khoá mục tiêu, bắn, trừ máu, mạng vẫn mất… nhưng **không thấy con nào** trên bản đồ | `spawnEnemy()` tạo model nhưng **thiếu `world.add(e.g)`** — địch sống trong logic mà không nằm trong scene graph. Đã sửa, và test 14 giờ kiểm tra: mọi địch phải có `parent === world`, đúng số model trong scene so với logic, vượt được bước kiểm tra **frustum** của renderer, và được gỡ khỏi scene khi chết / sang ván mới. |
+| Phím `P` không bỏ tạm dừng khi bảng tạm dừng đang mở | Bấm P chỉ đóng được bằng nút | `onKey` xử lý phím khác khi overlay đang hiện. Đã sửa: `P` bật/tắt được tạm dừng luôn. |
+
+> Bài học rút ra: test chỉ kiểm tra logic là chưa đủ cho game 3D — phải kiểm tra **scene graph** và **khả năng hiển thị**.
+> Vì vậy harness hiện kiểm tra cả 3 tầng: lõi logic → scene graph (model có thật, đúng vị trí, đúng số lượng) → frustum (sẽ thực sự được vẽ).
+
+Mẹo gỡ lỗi khi đang chơi: mở DevTools Console gõ `NEON.countInScene('enemy:')` để xem số model địch đang có trong scene,
+`NEON.S.enemies.length` để xem số địch trong logic — hai số này **luôn phải bằng nhau**.
+Góc trên bên trái menu (phím `H`) có hiển thị **bản dựng** để biết mình đang chạy bản mới hay bản cũ trong cache.
 
 ## 🔧 Muốn tinh chỉnh?
 

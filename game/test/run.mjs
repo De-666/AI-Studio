@@ -594,7 +594,75 @@ T('13. Địch monster / alien: icon SVG, dịch chuyển tức thời, tách đ
   S.paused = true;
 });
 
-T('14. Vòng lặp render & dọn dẹp', () => {
+T('14. Địch phải HIỆN trên bản đồ (chống lỗi "tháp bắn mà không thấy địch")', () => {
+  const sceneCount = () => NEON.countInScene('enemy:');
+  NEON.startGame('normal');
+  eq(sceneCount(), 0, 'ván mới chưa có model địch nào trong scene');
+
+  const types = ['grunt', 'runner', 'tank', 'flyer', 'alien', 'monster', 'spawn', 'boss'];
+  const models = types.map((t) => NEON.spawnEnemy(t, 10));
+  eq(S.enemies.length, types.length, `spawn đủ ${types.length} loại địch`);
+  eq(sceneCount(), types.length, 'MỌI địch đều được thêm vào scene graph (đây chính là lỗi đã gặp)');
+
+  for (const e of models) {
+    eq(e.g.parent, NEON.world, `model ${e.type} nằm trong nhóm world của scene`);
+    ok(e.g.visible, `model ${e.type} đang bật hiển thị`);
+    const parts = [];
+    e.g.traverse((o) => { if (o.isMesh) parts.push(o); });
+    gt(parts.length, 2, `model ${e.type} có ${parts.length} mesh (không phải group rỗng)`);
+    ok(parts.every((m) => m.material && m.material.visible !== false), `mọi mesh của ${e.type} có material hợp lệ`);
+    ok(parts.some((m) => m.name === 'enemy-marker'), `model ${e.type} có vòng sáng dưới chân giúp dễ nhìn`);
+    ok(Number.isFinite(e.g.position.x) && Number.isFinite(e.g.position.z), `vị trí ${e.type} hợp lệ`);
+    ok(Math.abs(e.g.position.x) <= NEON.GRID.W / 2 + 8, `vị trí x của ${e.type} nằm trong sân đấu (${e.g.position.x.toFixed(1)})`);
+    ok(Math.abs(e.g.position.z) <= NEON.GRID.D / 2 + 8, `vị trí z của ${e.type} nằm trong sân đấu (${e.g.position.z.toFixed(1)})`);
+    ok(e.g.scale.x > 0.1, `model ${e.type} có kích thước nhìn thấy được (scale ${e.g.scale.x})`);
+  }
+
+  // trong suốt trận, số model trong scene luôn khớp số địch trong logic
+  S.paused = false;
+  NEON.startWave();
+  let matched = true;
+  for (let i = 0; i < 40 && matched; i++) {
+    step(1 / 30, 15);
+    if (sceneCount() !== S.enemies.length) matched = false;
+  }
+  ok(matched, `số model trong scene luôn khớp số địch trong logic (${S.enemies.length} địch ↔ ${sceneCount()} model)`);
+
+  // địch bay phải ở trên cao, địch mặt đất phải sát mặt đất
+  const flyer = S.enemies.find((e) => e.air);
+  const ground = S.enemies.find((e) => !e.air);
+  if (flyer) gt(flyer.g.position.y, 1.5, `drone bay ở trên cao (y=${flyer.g.position.y.toFixed(1)})`);
+  if (ground) lt(ground.g.position.y, 0.6, `địch mặt đất sát nền (y=${ground.g.position.y.toFixed(2)})`);
+
+  // kiểm tra "sẽ thực sự được renderer vẽ": chiếu lên màn hình + kiểm tra frustum
+  NEON.camera.updateMatrixWorld(true);
+  NEON.camera.updateProjectionMatrix();
+  NEON.scene.updateMatrixWorld(true);
+  const frustum = new THREE.Frustum().setFromProjectionMatrix(
+    new THREE.Matrix4().multiplyMatrices(NEON.camera.projectionMatrix, NEON.camera.matrixWorldInverse));
+  const v = new THREE.Vector3();
+  let onScreen = 0, inFrustum = 0;
+  for (const e of S.enemies) {
+    v.copy(e.pos); v.y += 0.5; v.project(NEON.camera);
+    if (Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 && v.z < 1) onScreen++;
+    let body = null;
+    e.g.traverse((o) => { if (!body && o.isMesh && o.name !== 'enemy-marker') body = o; });
+    if (body && frustum.intersectsObject(body)) inFrustum++;
+  }
+  gt(onScreen, 0, `${onScreen}/${S.enemies.length} địch đang nằm trong khung nhìn ở góc camera mặc định`);
+  ok(inFrustum >= onScreen, `mọi địch trong khung nhìn đều vượt bước kiểm tra frustum (${inFrustum} ≥ ${onScreen})`);
+  ok(Math.abs(S.enemies[0].g.position.x) < 30, 'địch không bị đẩy ra ngoài sân đấu');
+
+  // dọn dẹp khi chết / sang ván mới
+  const victim = S.enemies[0];
+  NEON.damageEnemy(victim, 1e9, {});
+  eq(victim.g.parent, null, 'địch bị hạ được gỡ khỏi scene');
+  NEON.startGame('normal');
+  eq(sceneCount(), 0, 'ván mới dọn sạch model địch cũ');
+  S.paused = true;
+});
+
+T('15. Vòng lặp render & dọn dẹp', () => {
   NEON.startGame('normal');
   const r0 = NEON.renderer.__renders;
   NEON.frame(1000);

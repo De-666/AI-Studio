@@ -20,7 +20,7 @@ Repo này có thêm một **game tower defense 3D bằng Three.js**, đóng gói
 ```bash
 npm run game          # chơi ngay tại http://localhost:5173/game3d.html
 npm run game:build    # dựng lại game3d.html từ game/src/
-npm run game:test     # 140 kiểm tra headless (jsdom + stub WebGL)
+npm run game:test     # 251 kiểm tra headless (logic + scene graph + frustum)
 npm run game:balance  # bot tự chơi để đo cân bằng độ khó
 ```
 
