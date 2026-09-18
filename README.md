@@ -5,6 +5,26 @@
 Giao diện lấy cảm hứng từ **Leonardo AI** (Image Studio, dark neon, gallery masonry) + **ChatGPT Workspace** (Projects, Pin, Recent, quản lý chat theo ngữ cảnh).
 
 > Live preview đang chạy trên port 5173 — mở LIVE PREVIEW trong Arena để dùng ngay.
+> (Nếu bạn muốn xem web app của AI Studio thay vì game, chạy `npm run dev`.)
+
+## 🎮 Kèm theo: game 3D "Neon Defense"
+
+Repo này có thêm một **game tower defense 3D bằng Three.js**, đóng gói thành **một file HTML duy nhất**:
+[`game3d.html`](./game3d.html) — mở là chơi, không cần internet/CDN.
+
+- 22×16 ô đấu trường neon, đường đi uốn lượn, cổng không gian & căn cứ phát sáng
+- 5 loại tháp (liên thanh · pháo nổ · súng băng · trụ sét · bắn tỉa) × 5 cấp nâng cấp
+- 5 loại địch + trùm (drone bay đi đường riêng), 25 đợt, 3 độ khó, tiếng động tổng hợp bằng WebAudio
+- HUD/menu/điều khiển đầy đủ cho **chuột · bàn phím · cảm ứng**
+
+```bash
+npm run game          # chơi ngay tại http://localhost:5173/game3d.html
+npm run game:build    # dựng lại game3d.html từ game/src/
+npm run game:test     # 140 kiểm tra headless (jsdom + stub WebGL)
+npm run game:balance  # bot tự chơi để đo cân bằng độ khó
+```
+
+Chi tiết gameplay, kiến trúc và cách tinh chỉnh: [`game/README.md`](./game/README.md).
 
 ## ✨ Tính năng chính
 

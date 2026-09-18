@@ -1,0 +1,2065 @@
+/* =========================================================================
+ * NEON DEFENSE 3D — engine + gameplay
+ * File này được nhúng vào game3d.html bởi game/build.mjs
+ * Dùng: biến toàn cục `THREE` + các hàm trong logic.js (nối cùng một scope)
+ * ========================================================================= */
+
+/* ------------------------------- DOM ----------------------------------- */
+const $ = (id) => document.getElementById(id);
+const el = {
+  canvas: $('c'), stats: $('stats'), ctrls: $('ctrls'), cards: $('cards'),
+  inspector: $('inspector'), wavepanel: $('wavepanel'), overlay: $('overlay'),
+  toasts: $('toasts'), wavefill: $('wavefill'), hint: $('hint'), side: $('side'), fatal: $('fatal'),
+};
+const IS_SMALL = () => window.innerWidth < 900;
+
+/* ----------------------------- tiện ích -------------------------------- */
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const rndInt = (a, b) => Math.floor(rnd(a, b + 1));
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const _dm = new THREE.Object3D();
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _c1 = new THREE.Color(), _c2 = new THREE.Color();
+
+function iPlace(im, idx, x, y, z, ry = 0, sx = 1, sy = 1, sz = 1, rx = 0) {
+  _dm.position.set(x, y, z); _dm.rotation.set(rx, ry, 0); _dm.scale.set(sx, sy, sz);
+  _dm.updateMatrix(); im.setMatrixAt(idx, _dm.matrix);
+}
+function dist2d(ax, az, bx, bz) { const dx = ax - bx, dz = az - bz; return Math.sqrt(dx * dx + dz * dz); }
+function fmtTime(s) { s = Math.max(0, Math.ceil(s)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
+
+/* ----------------------------- vật liệu -------------------------------- */
+function smat(color, o = {}) {
+  return new THREE.MeshStandardMaterial({
+    color, flatShading: o.flat !== false, roughness: o.rough ?? 0.55, metalness: o.metal ?? 0.35,
+    emissive: o.emissive ?? 0x000000, emissiveIntensity: o.ei ?? 1, transparent: !!o.transparent,
+    opacity: o.opacity ?? 1, side: o.side ?? THREE.FrontSide,
+  });
+}
+function bmat(color, opacity = 1, additive = false, side) {
+  return new THREE.MeshBasicMaterial({
+    color, transparent: opacity < 1 || additive, opacity,
+    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+    depthWrite: !(additive || opacity < 1), side: side ?? THREE.FrontSide, fog: true,
+  });
+}
+function glowMat(color, opacity = 0.85) { return bmat(color, opacity, true); }
+
+const GEO = {
+  box: new THREE.BoxGeometry(1, 1, 1),
+  sph: new THREE.SphereGeometry(1, 14, 10),
+  sphLo: new THREE.SphereGeometry(1, 8, 6),
+  cyl: new THREE.CylinderGeometry(1, 1, 1, 14),
+  cyl6: new THREE.CylinderGeometry(1, 1, 1, 6),
+  cylLo: new THREE.CylinderGeometry(1, 1, 1, 8),
+  cone: new THREE.ConeGeometry(1, 1, 6),
+  coneLo: new THREE.ConeGeometry(1, 1, 4),
+  oct: new THREE.OctahedronGeometry(1, 0),
+  ico: new THREE.IcosahedronGeometry(1, 0),
+  torus: new THREE.TorusGeometry(1, 0.09, 8, 30),
+  disc: new THREE.CircleGeometry(1, 48),
+  ring: new THREE.RingGeometry(0.975, 1, 64),
+  plate: new THREE.CylinderGeometry(1, 1, 1, 6),
+  plane: new THREE.PlaneGeometry(1, 1),
+};
+function part(geo, mat, o = {}) {
+  const m = new THREE.Mesh(geo, mat);
+  if (o.s) m.scale.set(o.s[0], o.s[1], o.s[2]);
+  if (o.p) m.position.set(o.p[0], o.p[1], o.p[2]);
+  if (o.r) m.rotation.set(o.r[0], o.r[1], o.r[2]);
+  m.castShadow = o.shadow !== false; m.receiveShadow = false;
+  return m;
+}
+
+/* ------------------------- âm thanh (WebAudio) ------------------------- */
+const Sound = {
+  ctx: null, master: null, on: true, ready: false, _last: {},
+  init() {
+    if (this.ready) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.42;
+      this.master.connect(this.ctx.destination);
+      this.ready = true;
+    } catch (e) { /* không có audio cũng không sao */ }
+  },
+  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); },
+  tone({ freq = 440, type = 'square', dur = 0.1, vol = 0.2, slide = 0, delay = 0, attack = 0.004 }) {
+    if (!this.on || !this.ready) return;
+    const t0 = this.ctx.currentTime + delay;
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(24, freq * slide), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(vol, t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(this.master); o.start(t0); o.stop(t0 + dur + 0.03);
+  },
+  noise({ dur = 0.2, vol = 0.25, freq = 900, q = 1, type = 'lowpass', delay = 0, slide = 0.35 }) {
+    if (!this.on || !this.ready) return;
+    const ctx = this.ctx, t0 = ctx.currentTime + delay;
+    const len = Math.max(64, Math.floor(ctx.sampleRate * dur));
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const f = ctx.createBiquadFilter(); f.type = type; f.Q.value = q;
+    f.frequency.setValueAtTime(freq, t0);
+    f.frequency.exponentialRampToValueAtTime(Math.max(50, freq * slide), t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(f).connect(g).connect(this.master); src.start(t0);
+  },
+  play(kind) {
+    if (!this.on || !this.ready) return;
+    const now = this.ctx.currentTime;
+    if (this._last[kind] && now - this._last[kind] < 0.045) return;
+    this._last[kind] = now;
+    switch (kind) {
+      case 'gun': this.tone({ freq: 1150, type: 'square', dur: 0.055, vol: 0.055, slide: 0.45 }); break;
+      case 'cannon': this.noise({ dur: 0.3, vol: 0.16, freq: 420, slide: 0.25 }); this.tone({ freq: 130, type: 'sine', dur: 0.22, vol: 0.13, slide: 0.5 }); break;
+      case 'frost': this.tone({ freq: 1500, type: 'triangle', dur: 0.14, vol: 0.06, slide: 1.9 }); break;
+      case 'tesla': this.noise({ dur: 0.16, vol: 0.11, freq: 3200, type: 'highpass', slide: 0.6 }); this.tone({ freq: 260, type: 'sawtooth', dur: 0.12, vol: 0.05, slide: 2.4 }); break;
+      case 'sniper': this.tone({ freq: 1900, type: 'square', dur: 0.08, vol: 0.07, slide: 0.15 }); this.noise({ dur: 0.22, vol: 0.08, freq: 2600, type: 'highpass', slide: 0.3 }); break;
+      case 'hit': this.tone({ freq: 320, type: 'triangle', dur: 0.05, vol: 0.035, slide: 0.6 }); break;
+      case 'death': this.noise({ dur: 0.26, vol: 0.13, freq: 900, slide: 0.2 }); this.tone({ freq: 220, type: 'sawtooth', dur: 0.18, vol: 0.06, slide: 0.35 }); break;
+      case 'coin': this.tone({ freq: 1180, type: 'triangle', dur: 0.07, vol: 0.05 }); this.tone({ freq: 1760, type: 'triangle', dur: 0.09, vol: 0.045, delay: 0.05 }); break;
+      case 'place': this.tone({ freq: 300, type: 'sine', dur: 0.1, vol: 0.12, slide: 1.6 }); this.noise({ dur: 0.14, vol: 0.08, freq: 700, slide: 0.6 }); break;
+      case 'upgrade': [523, 659, 784, 1046].forEach((f, i) => this.tone({ freq: f, type: 'triangle', dur: 0.12, vol: 0.06, delay: i * 0.055 })); break;
+      case 'sell': [700, 500].forEach((f, i) => this.tone({ freq: f, type: 'square', dur: 0.1, vol: 0.05, delay: i * 0.07 })); break;
+      case 'wave': [330, 415, 494, 659].forEach((f, i) => this.tone({ freq: f, type: 'sawtooth', dur: 0.3, vol: 0.055, delay: i * 0.12, slide: 1.01 })); break;
+      case 'clear': [523, 659, 880].forEach((f, i) => this.tone({ freq: f, type: 'triangle', dur: 0.24, vol: 0.07, delay: i * 0.1 })); break;
+      case 'leak': this.tone({ freq: 180, type: 'sawtooth', dur: 0.34, vol: 0.13, slide: 0.5 }); this.noise({ dur: 0.3, vol: 0.12, freq: 600, slide: 0.3 }); break;
+      case 'error': this.tone({ freq: 150, type: 'square', dur: 0.13, vol: 0.1, slide: 0.8 }); break;
+      case 'win': [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone({ freq: f, type: 'triangle', dur: 0.5, vol: 0.09, delay: i * 0.15 })); break;
+      case 'lose': [440, 392, 330, 262].forEach((f, i) => this.tone({ freq: f, type: 'sawtooth', dur: 0.55, vol: 0.09, delay: i * 0.2, slide: 0.98 })); break;
+    }
+  },
+};
+
+/* ----------------------------- scene ----------------------------------- */
+let renderer = null, scene = null, camera = null;
+const world = new THREE.Group();
+const FX = [];              // hiệu ứng có vòng đời
+const animGroups = [];      // nhóm mesh cần animate (cổng, căn cứ, trang trí)
+let baseObj = null, portalObj = null, basePos = new THREE.Vector3();
+
+const CAM = { target: new THREE.Vector3(0, 0, 0.5), theta: -0.72, phi: 0.86, dist: 36, shake: 0 };
+
+function initRenderer() {
+  renderer = new THREE.WebGLRenderer({ canvas: el.canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  if ('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05080f);
+  scene.fog = new THREE.FogExp2(0x060a14, 0.0115);
+  camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 420);
+  scene.add(world);
+
+  pathMap = pathTiles();     // dữ liệu đường đi dùng chung cho nền, làn đường và luật xây
+  buildLights();
+  buildStars();
+  buildGround();
+  buildPath();
+  buildDecor();
+  buildBase();
+  buildPortal();
+}
+
+function buildLights() {
+  scene.add(new THREE.HemisphereLight(0x6d8dd8, 0x0a1020, 1.05));
+  const dir = new THREE.DirectionalLight(0xd7e6ff, 1.85);
+  dir.position.set(18, 32, 14);
+  dir.castShadow = true;
+  dir.shadow.mapSize.set(2048, 2048);
+  const sc = dir.shadow.camera;
+  sc.left = -32; sc.right = 32; sc.top = 28; sc.bottom = -28; sc.near = 2; sc.far = 95;
+  dir.shadow.bias = -0.0007; dir.shadow.normalBias = 0.035;
+  scene.add(dir);
+
+  const pl = [
+    [0x2ad4ff, 260, -19, 10, -13], [0xff4fd8, 220, 20, 10, 14],
+    [0x9d7bff, 190, 0, 12, 0],
+  ];
+  for (const [c, i, x, y, z] of pl) {
+    const p = new THREE.PointLight(c, i, 75, 2);
+    p.position.set(x, y, z); scene.add(p);
+  }
+}
+
+function buildStars() {
+  const n = 780, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), c = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, r = 55 + Math.random() * 80, y = 6 + Math.random() * 75;
+    pos[i * 3] = Math.cos(a) * r; pos[i * 3 + 1] = y; pos[i * 3 + 2] = Math.sin(a) * r;
+    c.setHSL(0.53 + Math.random() * 0.16, 0.75, 0.55 + Math.random() * 0.4);
+    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const m = new THREE.PointsMaterial({ size: 1.15, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+  const p = new THREE.Points(g, m); p.frustumCulled = false; world.add(p);
+}
+
+const blocked = new Set();      // ô không thể xây
+const towerAt = new Map();      // 'gx,gz' -> tower
+let pathMap = null;
+
+function buildGround() {
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(GRID.W + 46, GRID.D + 46), smat(0x080d16, { rough: 1, metal: 0, flat: false }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.26; ground.receiveShadow = true;
+  world.add(ground);
+
+  // vành sáng quanh bản đồ
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1, 0.035, 6, 4), glowMat(0x1f7fbf, 0.5));
+  rim.scale.set(GRID.W / 2 + 4, GRID.D / 2 + 4, 1);
+  rim.rotation.x = -Math.PI / 2; rim.rotation.z = Math.PI / 4; rim.position.y = -0.22;
+  world.add(rim);
+
+  const tileGeo = new THREE.BoxGeometry(TILE * 0.97, 0.24, TILE * 0.97);
+  const tileMat = smat(0xffffff, { rough: 0.95, metal: 0.04 });
+  const tiles = new THREE.InstancedMesh(tileGeo, tileMat, COLS * ROWS);
+  tiles.receiveShadow = true;
+  const rng = makeRNG(2024);
+  let i = 0;
+  for (let gz = 0; gz < ROWS; gz++) {
+    for (let gx = 0; gx < COLS; gx++) {
+      iPlace(tiles, i, worldX(gx), -0.12, worldZ(gz));
+      const k = key(gx, gz);
+      if (pathMap.has(k)) { _c1.setHex(0x2c4166).offsetHSL(0, 0, rng() * 0.035 - 0.012); blocked.add(k); }
+      else _c1.setHex(0x151d2e).offsetHSL(rng() * 0.04 - 0.02, 0, rng() * 0.04 - 0.014);
+      tiles.setColorAt(i, _c1); i++;
+    }
+  }
+  tiles.instanceMatrix.needsUpdate = true;
+  if (tiles.instanceColor) tiles.instanceColor.needsUpdate = true;
+  world.add(tiles);
+}
+
+function buildPath() {
+  const tiles = [...pathMap.values()];
+  const laneMat = smat(0x0a2540, { emissive: 0x27c8ff, ei: 1.5, rough: 0.4, metal: 0.25 });
+  const laneGeo = new THREE.BoxGeometry(1.72, 0.06, 0.5);
+  const lanes = new THREE.InstancedMesh(laneGeo, laneMat, tiles.length);
+  tiles.forEach((t, i) => iPlace(lanes, i, worldX(t.gx), 0.02, worldZ(t.gz), t.dx !== 0 ? 0 : Math.PI / 2));
+  lanes.instanceMatrix.needsUpdate = true;
+  world.add(lanes);
+  animGroups.push({ obj: lanes, kind: 'lane' });
+
+  // viền neon hai bên đường
+  const strips = [];
+  for (const t of tiles) {
+    const x = worldX(t.gx), z = worldZ(t.gz);
+    for (const [ax, az] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (!inGrid(t.gx + ax, t.gz + az)) continue;
+      if (pathMap.has(key(t.gx + ax, t.gz + az))) continue;
+      strips.push({ x: x + ax * (TILE / 2 - 0.05), z: z + az * (TILE / 2 - 0.05), ry: az !== 0 ? Math.PI / 2 : 0 });
+    }
+  }
+  const sGeo = new THREE.BoxGeometry(0.13, 0.14, TILE * 0.96);
+  const sm = new THREE.InstancedMesh(sGeo, glowMat(0x37dcff, 0.72), strips.length);
+  strips.forEach((s, i) => iPlace(sm, i, s.x, 0.03, s.z, s.ry));
+  sm.instanceMatrix.needsUpdate = true;
+  world.add(sm);
+}
+
+function buildDecor() {
+  const rng = makeRNG(7771);
+  const rockMat = smat(0x2a3346, { rough: 0.95, metal: 0.1 });
+  const rockMat2 = smat(0x3d4964, { rough: 0.9, metal: 0.15 });
+  const plantMat = smat(0x14352c, { rough: 0.9, metal: 0.05, emissive: 0x0d5c46, ei: 0.7 });
+  const cryColors = [0x35e0ff, 0xff4fd8, 0x9d7bff, 0x5cffa8];
+  const cryMats = cryColors.map((c) => smat(0x0d2030, { emissive: c, ei: 1.5, rough: 0.25, metal: 0.4 }));
+  const postMat = smat(0x1b2436, { metal: 0.6, rough: 0.45 });
+
+  const rocks = [], rocks2 = [], plants = [], posts = [], trunks = [];
+  const crys = cryColors.map(() => []), discs = cryColors.map(() => []);
+  let hero = 0;
+
+  /* ---- rải trang trí trên các ô trống ---- */
+  for (let gz = 0; gz < ROWS; gz++) {
+    for (let gx = 0; gx < COLS; gx++) {
+      if (pathMap.has(key(gx, gz))) continue;
+      if (gx < 3 && Math.abs(gz - 3) <= 2) continue;              // chừa chỗ cho cổng vào
+      if (gx > COLS - 5 && Math.abs(gz - 3) <= 2) continue;       // chừa chỗ cho căn cứ
+      const r = rng();
+      if (r > 0.24) continue;
+      const x = worldX(gx), z = worldZ(gz);
+      blocked.add(key(gx, gz));
+
+      if (r < 0.09) {                                             // cụm đá
+        const n = rndInt(2, 4);
+        for (let j = 0; j < n; j++) {
+          const o = { x: x + rnd(-0.6, 0.6), z: z + rnd(-0.6, 0.6), s: rnd(0.34, 0.8), ry: rng() * 6.28 };
+          (rng() < 0.5 ? rocks : rocks2).push(o);
+        }
+      } else if (r < 0.16) {                                      // mỏ tinh thể phát sáng
+        const kind = rndInt(0, cryColors.length - 1);
+        const s = rnd(0.6, 1.1);
+        crys[kind].push({ x, z, s, ry: rng() * 6.28 });
+        discs[kind].push({ x, z, s: s * 1.9 });
+        if (rng() < 0.22 && hero < 6) {
+          hero++;
+          const g = new THREE.Group(); g.position.set(x, 0, z);
+          const h = rnd(0.9, 1.5);
+          g.add(part(GEO.oct, cryMats[kind], { s: [0.3, h, 0.3], p: [0, h * 0.8, 0], shadow: false }));
+          for (let j = 0; j < 2; j++) g.add(part(GEO.oct, cryMats[kind], { s: [0.15, rnd(0.3, 0.5), 0.15], p: [rnd(-0.45, 0.45), 0.35, rnd(-0.45, 0.45)], r: [0.25, rng() * 3, -0.3], shadow: false }));
+          world.add(g);
+          animGroups.push({ obj: g, kind: 'crystal', ph: rng() * 6.28 });
+        }
+      } else if (r < 0.21) {                                      // bụi cây
+        for (let j = 0, n = rndInt(2, 4); j < n; j++) {
+          const px = x + rnd(-0.6, 0.6), pz = z + rnd(-0.6, 0.6), h = rnd(0.6, 1.3);
+          trunks.push({ x: px, z: pz, h });
+          plants.push({ x: px, z: pz, h, ry: rng() * 6.28 });
+        }
+      } else {                                                    // cột đèn neon ven đấu trường
+        const kind = rndInt(0, cryColors.length - 1);
+        posts.push({ x, z, h: rnd(1.9, 2.5), ry: rng() * 6.28 });
+        discs[kind].push({ x, z, s: 1.5 });
+      }
+    }
+  }
+
+  /* ---- vành núi + tháp sáng quanh đấu trường (tạo khung cảnh) ---- */
+  const ringRocks = [], spires = [];
+  for (let i = 0; i < 96; i++) {
+    const a = (i / 96) * Math.PI * 2 + rng() * 0.05;
+    const rx = GRID.W / 2 + 5 + rng() * 12, rz = GRID.D / 2 + 5 + rng() * 12;
+    ringRocks.push({ x: Math.cos(a) * rx, z: Math.sin(a) * rz, s: rnd(0.9, 3.1), ry: rng() * 6.28 });
+  }
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2 + rng() * 0.3;
+    const rx = GRID.W / 2 + 16 + rng() * 16, rz = GRID.D / 2 + 16 + rng() * 16;
+    spires.push({ x: Math.cos(a) * rx, z: Math.sin(a) * rz, h: rnd(3, 8), s: rnd(0.4, 0.9), c: cryColors[i % cryColors.length] });
+  }
+
+  /* ---- gộp thành các InstancedMesh (nhẹ draw call) ---- */
+  const mk = (geo, mat, list, place) => {
+    if (!list.length) return null;
+    const im = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((o, i) => place(im, i, o));
+    im.instanceMatrix.needsUpdate = true;
+    world.add(im);
+    return im;
+  };
+  mk(GEO.ico, rockMat, rocks, (im, i, o) => iPlace(im, i, o.x, o.s * 0.34, o.z, o.ry, o.s * 1.2, o.s * 0.9, o.s * 1.1, rnd(-0.12, 0.12)));
+  mk(GEO.ico, rockMat2, rocks2, (im, i, o) => iPlace(im, i, o.x, o.s * 0.3, o.z, o.ry, o.s * 1.1, o.s * 0.8, o.s, rnd(-0.12, 0.12)));
+  mk(GEO.ico, rockMat2, ringRocks, (im, i, o) => iPlace(im, i, o.x, o.s * 0.28, o.z, o.ry, o.s * 1.35, o.s, o.s * 1.25, rnd(-0.15, 0.15)));
+  mk(GEO.cyl6, plantMat, trunks, (im, i, o) => iPlace(im, i, o.x, o.h * 0.22, o.z, 0, 0.07, o.h * 0.45, 0.07));
+  mk(GEO.coneLo, plantMat, plants, (im, i, o) => iPlace(im, i, o.x, o.h * 0.68, o.z, o.ry, o.h * 0.5, o.h, o.h * 0.5));
+  mk(GEO.cylLo, postMat, posts, (im, i, o) => iPlace(im, i, o.x, o.h * 0.5, o.z, o.ry, 0.075, o.h, 0.075));
+  crys.forEach((list, k) => {
+    mk(GEO.oct, cryMats[k], list, (im, i, o) => iPlace(im, i, o.x, o.s * 0.62, o.z, o.ry, o.s * 0.42, o.s * 1.5, o.s * 0.42, 0));
+  });
+  discs.forEach((list, k) => {
+    mk(GEO.disc, bmat(cryColors[k], 0.16, true), list, (im, i, o) => iPlace(im, i, o.x, 0.035, o.z, 0, o.s, o.s, 1, -Math.PI / 2));
+  });
+  for (const sp of spires) {
+    const g = new THREE.Group(); g.position.set(sp.x, 0, sp.z);
+    const m = smat(0x101a2c, { emissive: sp.c, ei: 0.9, rough: 0.4, metal: 0.3 });
+    g.add(part(GEO.cone, m, { s: [sp.s, sp.h, sp.s], p: [0, sp.h * 0.5, 0], shadow: false }));
+    g.add(part(GEO.oct, glowMat(sp.c, 0.55), { s: [sp.s * 0.4, sp.s * 0.7, sp.s * 0.4], p: [0, sp.h + sp.s * 0.3, 0], shadow: false }));
+    world.add(g);
+    animGroups.push({ obj: g, kind: 'crystal', ph: rng() * 6.28 });
+  }
+}
+
+function buildBase() {
+  const pts = pathWorldPoints();
+  const end = pts[pts.length - 1];
+  basePos.set(end.x - 1.1, 0, end.z);
+  const g = new THREE.Group(); g.position.copy(basePos); world.add(g);
+
+  const shell = smat(0x1d2739, { metal: 0.65, rough: 0.42 });
+  const accent = smat(0x0b3348, { emissive: 0x35e0ff, ei: 1.5, metal: 0.5, rough: 0.3 });
+  g.add(part(GEO.plate, shell, { s: [3.5, 0.6, 3.5], p: [0, 0.3, 0] }));
+  g.add(part(GEO.plate, smat(0x0d1421, { metal: 0.6, rough: 0.5 }), { s: [2.9, 0.35, 2.9], p: [0, 0.72, 0] }));
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.4;
+    const px = Math.cos(a) * 2.45, pz = Math.sin(a) * 2.45;
+    g.add(part(GEO.box, shell, { s: [0.34, 1.7, 0.34], p: [px, 1.15, pz] }));
+    g.add(part(GEO.oct, accent, { s: [0.2, 0.3, 0.2], p: [px, 2.15, pz] }));
+  }
+  const ring = part(GEO.torus, glowMat(0x35e0ff, 0.85), { s: [2.2, 2.2, 2.2], r: [-Math.PI / 2, 0, 0], p: [0, 1.72, 0], shadow: false });
+  g.add(ring);
+  const core = part(GEO.oct, new THREE.MeshStandardMaterial({ color: 0x0a3a52, emissive: 0x6ff0ff, emissiveIntensity: 1.9, flatShading: true, metalness: 0.5, roughness: 0.2 }), { s: [0.85, 1.2, 0.85], p: [0, 2.5, 0] });
+  g.add(core);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(3.9, 26, 14, 0, Math.PI * 2, 0, Math.PI / 2), bmat(0x35e0ff, 0.09, true, THREE.DoubleSide));
+  dome.position.y = 0.3; g.add(dome);
+  const light = new THREE.PointLight(0x5ce8ff, 90, 34, 2); light.position.set(0, 3.2, 0); g.add(light);
+  baseObj = { group: g, ring, core, dome, light };
+}
+
+function buildPortal() {
+  const pts = pathWorldPoints();
+  const start = pts[0];
+  const g = new THREE.Group(); g.position.set(start.x - 0.9, 0, start.z); world.add(g);
+
+  const frame = part(GEO.plate, smat(0x241536, { metal: 0.6, rough: 0.4, emissive: 0x6b1a5c, ei: 0.5 }), { s: [1.9, 0.4, 1.9], p: [0, 0.2, 0] });
+  g.add(frame);
+  const spin = new THREE.Group(); spin.rotation.y = Math.PI / 2; spin.position.y = 1.3; g.add(spin);
+  const ring1 = part(GEO.torus, glowMat(0xff4fd8, 0.9), { s: [1.35, 1.35, 1.35], shadow: false });
+  const ring2 = part(GEO.torus, glowMat(0xb98cff, 0.7), { s: [1.0, 1.0, 1.0], shadow: false });
+  spin.add(ring1, ring2);
+  const hole = new THREE.Mesh(new THREE.CircleGeometry(1.25, 32), bmat(0xff4fd8, 0.16, true, THREE.DoubleSide));
+  hole.position.y = 1.3; hole.rotation.y = Math.PI / 2; g.add(hole);
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.5, 9, 18, 1, true), bmat(0xff4fd8, 0.075, true, THREE.DoubleSide));
+  beam.position.y = 4.6; g.add(beam);
+  const light = new THREE.PointLight(0xff5ad8, 120, 30, 2); light.position.set(0, 2.2, 0); g.add(light);
+  const pGlow = new THREE.Mesh(new THREE.CircleGeometry(1.9, 32), bmat(0xff4fd8, 0.2, true));
+  pGlow.rotation.x = -Math.PI / 2; pGlow.position.y = 0.03; g.add(pGlow);
+  portalObj = { group: g, ring1, ring2, hole, beam, light };
+}
+
+/* --------------------------- model tháp -------------------------------- */
+function makePips(g, color, radius = 0.9, y = 0.36) {
+  const arr = [];
+  const m = smat(0x0a1a24, { emissive: color, ei: 1.8, rough: 0.3, metal: 0.2 });
+  for (let i = 0; i < MAX_LEVEL - 1; i++) {
+    const a = (i / (MAX_LEVEL - 1)) * Math.PI * 2 - Math.PI / 2;
+    const p = part(GEO.box, m, { s: [0.11, 0.075, 0.11], p: [Math.cos(a) * radius, y, Math.sin(a) * radius], shadow: false });
+    p.visible = false; g.add(p); arr.push(p);
+  }
+  return arr;
+}
+
+function modelGun() {
+  const g = new THREE.Group();
+  const dark = smat(0x1b2434, { metal: 0.6, rough: 0.4 });
+  const accent = smat(0x0d3a4d, { emissive: 0x4fd8ff, ei: 1.35, metal: 0.5, rough: 0.3 });
+  g.add(part(GEO.plate, dark, { s: [0.76, 0.3, 0.76], p: [0, 0.15, 0] }));
+  g.add(part(GEO.cyl, accent, { s: [0.6, 0.09, 0.6], p: [0, 0.33, 0] }));
+  g.add(part(GEO.box, dark, { s: [0.42, 0.48, 0.42], p: [0, 0.56, 0] }));
+  const turret = new THREE.Group(); turret.position.y = 0.84; g.add(turret);
+  turret.add(part(GEO.box, accent, { s: [0.46, 0.3, 0.56], p: [0, 0, 0.02] }));
+  turret.add(part(GEO.box, dark, { s: [0.09, 0.09, 0.72], p: [-0.12, 0.03, 0.44] }));
+  turret.add(part(GEO.box, dark, { s: [0.09, 0.09, 0.72], p: [0.12, 0.03, 0.44] }));
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.03, 0.82); turret.add(muzzle);
+  const glow = part(GEO.box, glowMat(0x7ff0ff, 0.55), { s: [0.22, 0.07, 0.22], p: [0, 0.17, 0.06], shadow: false });
+  turret.add(glow);
+  return { g, turret, muzzle, glow };
+}
+
+function modelCannon() {
+  const g = new THREE.Group();
+  const dark = smat(0x241d16, { metal: 0.55, rough: 0.5 });
+  const accent = smat(0x3a2408, { emissive: 0xffa63d, ei: 1.2, metal: 0.5, rough: 0.35 });
+  g.add(part(GEO.plate, dark, { s: [0.88, 0.34, 0.88], p: [0, 0.17, 0] }));
+  g.add(part(GEO.cyl, accent, { s: [0.66, 0.1, 0.66], p: [0, 0.37, 0] }));
+  const turret = new THREE.Group(); turret.position.y = 0.5; g.add(turret);
+  turret.add(part(GEO.plate, dark, { s: [0.62, 0.44, 0.62], p: [0, 0.22, 0] }));
+  turret.add(part(GEO.cyl, smat(0x120e0a, { metal: 0.7, rough: 0.35 }), { s: [0.17, 0.98, 0.17], p: [0, 0.32, 0.52], r: [Math.PI / 2, 0, 0] }));
+  turret.add(part(GEO.torus, accent, { s: [0.24, 0.24, 0.24], p: [0, 0.32, 0.44], r: [Math.PI / 2, 0, 0], shadow: false }));
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.32, 1.06); turret.add(muzzle);
+  const glow = part(GEO.sphLo, glowMat(0xffc46b, 0.8), { s: [0.17, 0.17, 0.17], p: [0, 0.32, 1.04], shadow: false });
+  turret.add(glow);
+  return { g, turret, muzzle, glow };
+}
+
+function modelFrost() {
+  const g = new THREE.Group();
+  const dark = smat(0x16242e, { metal: 0.55, rough: 0.45 });
+  const accent = smat(0x0c3b4a, { emissive: 0x8ee9ff, ei: 1.3, metal: 0.5, rough: 0.3 });
+  g.add(part(GEO.plate, dark, { s: [0.72, 0.28, 0.72], p: [0, 0.14, 0] }));
+  g.add(part(GEO.cyl, accent, { s: [0.62, 0.09, 0.62], p: [0, 0.31, 0] }));
+  const turret = new THREE.Group(); turret.position.y = 0.44; g.add(turret);
+  turret.add(part(GEO.plate, dark, { s: [0.4, 0.3, 0.4], p: [0, 0.15, 0] }));
+  const spin = new THREE.Group(); spin.position.y = 0.42; turret.add(spin);
+  const cry = smat(0x0e2a3c, { emissive: 0x8ee9ff, ei: 1.7, rough: 0.2, metal: 0.45 });
+  spin.add(part(GEO.oct, cry, { s: [0.28, 0.6, 0.28], p: [0, 0.5, 0], shadow: false }));
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    spin.add(part(GEO.oct, cry, { s: [0.14, 0.28, 0.14], p: [Math.cos(a) * 0.34, 0.26, Math.sin(a) * 0.34], r: [0.35, a, -0.4], shadow: false }));
+  }
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.95, 0.15); turret.add(muzzle);
+  const glow = part(GEO.sphLo, glowMat(0xa8f2ff, 0.5), { s: [0.52, 0.52, 0.52], p: [0, 0.9, 0], shadow: false });
+  turret.add(glow);
+  return { g, turret, muzzle, glow, extras: { spin } };
+}
+
+function modelTesla() {
+  const g = new THREE.Group();
+  const dark = smat(0x1d1730, { metal: 0.6, rough: 0.4 });
+  const accent = smat(0x2a1450, { emissive: 0xb98cff, ei: 1.5, metal: 0.5, rough: 0.3 });
+  g.add(part(GEO.plate, dark, { s: [0.8, 0.3, 0.8], p: [0, 0.15, 0] }));
+  g.add(part(GEO.cyl, accent, { s: [0.68, 0.1, 0.68], p: [0, 0.32, 0] }));
+  const turret = new THREE.Group(); turret.position.y = 0.36; g.add(turret);
+  turret.add(part(GEO.cylLo, dark, { s: [0.21, 1.05, 0.21], p: [0, 0.52, 0] }));
+  for (let i = 0; i < 3; i++) {
+    turret.add(part(GEO.torus, glowMat(0xc9a4ff, 0.5), { s: [0.36 - i * 0.05, 0.36 - i * 0.05, 0.36 - i * 0.05], p: [0, 0.3 + i * 0.3, 0], r: [Math.PI / 2, 0, 0], shadow: false }));
+  }
+  const glow = part(GEO.sph, new THREE.MeshStandardMaterial({ color: 0x2a1450, emissive: 0xc9a4ff, emissiveIntensity: 2.1, flatShading: true, metalness: 0.5, roughness: 0.2 }),
+    { s: [0.34, 0.34, 0.34], p: [0, 1.16, 0] });
+  turret.add(glow);
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 1.16, 0); turret.add(muzzle);
+  return { g, turret, muzzle, glow };
+}
+
+function modelSniper() {
+  const g = new THREE.Group();
+  const dark = smat(0x182018, { metal: 0.6, rough: 0.4 });
+  const accent = smat(0x1b3a14, { emissive: 0x9dff6b, ei: 1.2, metal: 0.5, rough: 0.3 });
+  g.add(part(GEO.plate, dark, { s: [0.68, 0.26, 0.68], p: [0, 0.13, 0] }));
+  g.add(part(GEO.cyl, accent, { s: [0.44, 0.09, 0.44], p: [0, 0.36, 0] }));
+  g.add(part(GEO.box, dark, { s: [0.34, 1.2, 0.34], p: [0, 0.8, 0] }));
+  const turret = new THREE.Group(); turret.position.y = 1.44; g.add(turret);
+  turret.add(part(GEO.box, accent, { s: [0.36, 0.32, 0.52], p: [0, 0, 0] }));
+  turret.add(part(GEO.cylLo, smat(0x0d1410, { metal: 0.75, rough: 0.3 }), { s: [0.075, 1.5, 0.075], p: [0, 0.05, 0.78], r: [Math.PI / 2, 0, 0] }));
+  turret.add(part(GEO.box, dark, { s: [0.15, 0.14, 0.46], p: [0, 0.24, 0.06] }));
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.05, 1.56); turret.add(muzzle);
+  const glow = part(GEO.sphLo, glowMat(0xd6ffb0, 0.7), { s: [0.1, 0.1, 0.1], p: [0, 0.05, 1.5], shadow: false });
+  turret.add(glow);
+  return { g, turret, muzzle, glow };
+}
+
+const TOWER_MODELS = { gun: modelGun, cannon: modelCannon, frost: modelFrost, tesla: modelTesla, sniper: modelSniper };
+
+function buildTowerModel(typeId) {
+  const m = (TOWER_MODELS[typeId] || modelGun)();
+  const def = towerDef(typeId);
+  const pips = makePips(m.g, def.color, def.id === 'cannon' ? 1.0 : 0.9);
+  m.g.userData = { turret: m.turret, muzzle: m.muzzle, glow: m.glow, pips, extras: m.extras || null };
+  return m.g;
+}
+
+/* ------------------- con trỏ xây dựng + vòng tầm bắn ------------------- */
+const ghostOk = bmat(0x5cffa8, 0.5, true);
+const ghostBad = bmat(0xff5d73, 0.5, true);
+let ghost = null, ghostType = null, indicator = null;
+
+function buildIndicator() {
+  const grp = new THREE.Group();
+  const disc = new THREE.Mesh(GEO.disc, bmat(0x35e0ff, 0.07, true));
+  disc.rotation.x = -Math.PI / 2; disc.position.y = 0.055; grp.add(disc);
+  const ring = new THREE.Mesh(GEO.ring, bmat(0x35e0ff, 0.7, true));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.065; grp.add(ring);
+  const tile = new THREE.Mesh(new THREE.PlaneGeometry(TILE * 0.94, TILE * 0.94), bmat(0x5cffa8, 0.13, true));
+  tile.rotation.x = -Math.PI / 2; tile.position.y = 0.05; grp.add(tile);
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(TILE * 0.9, 0.06, TILE * 0.9)),
+    new THREE.LineBasicMaterial({ color: 0x9dffc8, transparent: true, opacity: 0.85 })
+  );
+  grp.add(outline);
+  grp.visible = false; world.add(grp);
+  indicator = { grp, disc, ring, tile, outline };
+}
+
+function makeGhost(typeId) {
+  if (ghost) { world.remove(ghost); ghost = null; }
+  if (!typeId) return;
+  ghost = buildTowerModel(typeId);
+  ghost.traverse((o) => { if (o.isMesh) { o.material = ghostOk; o.castShadow = false; } });
+  ghostType = typeId;
+  world.add(ghost);
+}
+
+function updateGhost() {
+  if (!ghost) return;
+  const h = S.hover, bm = S.buildMode;
+  if (!h) { ghost.visible = false; return; }
+  const p = worldPos(h.gx, h.gz);
+  const ok = canBuild(h.gx, h.gz);
+  ghost.visible = true;
+  ghost.position.set(p.x, 0.02, p.z);
+  const mat = ok ? ghostOk : ghostBad;
+  ghost.traverse((o) => { if (o.isMesh) o.material = mat; });
+  ghost.rotation.y += 0.012;
+  if (bm) {
+    const st = towerStats(bm, 1);
+    indicator.grp.visible = true;
+    indicator.grp.position.set(p.x, 0, p.z);
+    indicator.disc.scale.set(st.range, 1, st.range);
+    indicator.ring.scale.set(st.range, 1, st.range);
+    _c1.setHex(ok ? 0x35e0ff : 0xff5d73);
+    indicator.disc.material.color.copy(_c1);
+    indicator.ring.material.color.copy(_c1);
+    indicator.tile.material.color.copy(_c1);
+  }
+}
+
+/* ------------------------------ hiệu ứng ------------------------------- */
+function addFX(fx) { FX.push(fx); }
+
+function burst(o) {
+  const {
+    pos, color = 0xffffff, count = 14, speed = 7, size = 0.16, life = 0.5,
+    gravity = -16, shape = 'box', spread = 1, power = 1,
+  } = o;
+  const geo = shape === 'sph' ? GEO.sphLo : shape === 'oct' ? GEO.oct : GEO.box;
+  const inst = new THREE.InstancedMesh(geo, bmat(color, 0.95, true), count);
+  inst.frustumCulled = false;
+  const vel = [];
+  for (let i = 0; i < count; i++) {
+    const v = new THREE.Vector3(rnd(-1, 1), rnd(-0.35, 1) * spread, rnd(-1, 1)).normalize().multiplyScalar(speed * rnd(0.45, 1.15));
+    vel.push(v);
+    iPlace(inst, i, pos.x, pos.y, pos.z, rnd(0, 3), size, size, size, rnd(0, 3));
+  }
+  inst.instanceMatrix.needsUpdate = true;
+  world.add(inst);
+  addFX({
+    t: 0, life,
+    update(dt) {
+      this.t += dt;
+      if (this.t >= this.life) { world.remove(inst); return false; }
+      for (let i = 0; i < count; i++) {
+        const v = vel[i];
+        v.y += gravity * dt;
+        _dm.position.set(0, 0, 0); _dm.rotation.set(0, 0, 0); _dm.scale.set(1, 1, 1);
+        // lấy vị trí hiện tại từ matrix
+        inst.getMatrixAt(i, _dm.matrix);
+        const m = _dm.matrix.elements;
+        const x = m[12] + v.x * dt, y = m[13] + v.y * dt, z = m[14] + v.z * dt;
+        iPlace(inst, i, x, y, z, 0, size, size, size);
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      inst.material.opacity = 0.95 * (1 - this.t / this.life);
+      return true;
+    },
+  });
+}
+
+function ringFx(pos, color, radius = 3, life = 0.45, y = 0.12) {
+  const m = new THREE.Mesh(GEO.ring, bmat(color, 0.85, true));
+  m.rotation.x = -Math.PI / 2; m.position.set(pos.x, y, pos.z);
+  m.scale.set(0.3, 0.3, 1); world.add(m);
+  addFX({
+    t: 0, life,
+    update(dt) {
+      this.t += dt;
+      const k = this.t / this.life;
+      if (k >= 1) { world.remove(m); return false; }
+      const s = lerp(0.3, radius, Math.pow(k, 0.45));
+      m.scale.set(s, s, 1);
+      m.material.opacity = 0.85 * (1 - k);
+      return true;
+    },
+  });
+}
+
+function beamFx(a, b, color, life = 0.14, thick = 0.1) {
+  const len = a.distanceTo(b);
+  const m = new THREE.Mesh(GEO.box, bmat(color, 0.9, true));
+  m.scale.set(thick, thick, len);
+  m.position.copy(a).lerp(b, 0.5);
+  m.lookAt(b); m.castShadow = false; world.add(m);
+  addFX({
+    t: 0, life,
+    update(dt) {
+      this.t += dt;
+      const k = this.t / this.life;
+      if (k >= 1) { world.remove(m); return false; }
+      m.material.opacity = 0.9 * (1 - k);
+      m.scale.set(thick * (1 - k * 0.5), thick * (1 - k * 0.5), len);
+      return true;
+    },
+  });
+}
+
+function chainFx(points, color, life = 0.18) {
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    if (Math.random() < 0.5) { // vẽ 2 tia gấp khúc cho giống sét
+      const mid = _v1.copy(a).lerp(b, 0.5);
+      mid.x += rnd(-0.5, 0.5); mid.y += rnd(-0.4, 0.5); mid.z += rnd(-0.5, 0.5);
+      beamFx(a, mid, color, life, 0.075);
+      beamFx(mid, b, color, life, 0.075);
+    } else beamFx(a, b, color, life, 0.075);
+  }
+}
+
+function spinFx(pos, color, size = 1.2, life = 0.35) {
+  const m = new THREE.Mesh(GEO.oct, bmat(color, 0.9, true));
+  m.position.copy(pos); m.scale.setScalar(size); world.add(m);
+  addFX({
+    t: 0, life,
+    update(dt) {
+      this.t += dt;
+      const k = this.t / this.life;
+      if (k >= 1) { world.remove(m); return false; }
+      m.rotation.x += dt * 9; m.rotation.y += dt * 12;
+      m.scale.setScalar(size * (1 + k * 1.4));
+      m.material.opacity = 0.9 * (1 - k);
+      return true;
+    },
+  });
+}
+
+function updateFX(dt) {
+  for (let i = FX.length - 1; i >= 0; i--) {
+    const alive = FX[i].update(dt);
+    if (!alive) FX.splice(i, 1);
+  }
+}
+
+/* ---------------------------- trạng thái ------------------------------- */
+const S = {
+  phase: 'menu', speed: 1, diff: 'normal',
+  gold: 0, lives: 0, wave: 0, score: 0, kills: 0, leaks: 0, built: 0,
+  buildTimer: 0, waveTimer: 0, waveData: null, spawnIdx: 0, waveActive: false,
+  buildMode: null, selected: null, hover: null,
+  enemies: [], towers: [], projectiles: [],
+  pathPts: null, airPts: null, pathLen: 0, airLen: 0, sim: 0, best: 0,
+};
+let nid = 1;
+
+/* ---------------------- chuẩn bị dữ liệu đường đi ---------------------- */
+function buildPathData() {
+  const ground = pathWorldPoints().map((p) => ({ x: p.x, z: p.z }));
+  const air = airWorldPoints().map((p) => ({ x: p.x, z: p.z }));
+  S.pathPts = withLengths(ground); S.pathLen = S.pathPts[S.pathPts.length - 1].len;
+  S.airPts = withLengths(air); S.airLen = S.airPts[S.airPts.length - 1].len;
+}
+function withLengths(pts) {
+  const out = [{ x: pts[0].x, z: pts[0].z, len: 0 }];
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    acc += dist2d(pts[i - 1].x, pts[i - 1].z, pts[i].x, pts[i].z);
+    out.push({ x: pts[i].x, z: pts[i].z, len: acc });
+  }
+  return out;
+}
+function pointAtDist(pts, total, d) {
+  const last = pts[pts.length - 1];
+  if (d >= total) return { x: last.x, z: last.z, dx: 1, dz: 0, done: true };
+  let i = 0;
+  while (i < pts.length - 2 && d > pts[i + 1].len) i++;
+  const a = pts[i], b = pts[i + 1];
+  const seg = Math.max(0.0001, b.len - a.len);
+  const k = clamp((d - a.len) / seg, 0, 1);
+  return { x: lerp(a.x, b.x, k), z: lerp(a.z, b.z, k), dx: b.x - a.x, dz: b.z - a.z, done: false };
+}
+
+/* ------------------------------ kẻ địch -------------------------------- */
+function makeBar(w, color) {
+  const g = new THREE.Group();
+  const bg = new THREE.Mesh(GEO.plane, bmat(0x0a0611, 0.72));
+  bg.scale.set(w, w * 0.15, 1); g.add(bg);
+  const fill = new THREE.Mesh(GEO.plane, bmat(color, 0.95));
+  fill.scale.set(w * 0.96, w * 0.1, 1); fill.position.z = 0.012; g.add(fill);
+  g.userData = { fill, w };
+  return g;
+}
+
+function buildEnemyMesh(st) {
+  const g = new THREE.Group();          // chỉ giữ vị trí
+  const inner = new THREE.Group();      // xoay theo hướng đi
+  g.add(inner);
+  const body = smat(st.color, { metal: 0.5, rough: 0.45, emissive: st.color, ei: 0.26 });
+  const dark = smat(0x121824, { metal: 0.65, rough: 0.5 });
+  const eye = glowMat(0xffffff, 0.9);
+  let rotor = null;
+
+  if (st.air) {
+    inner.add(part(GEO.cylLo, dark, { s: [0.46, 0.13, 0.46] }));
+    inner.add(part(GEO.oct, body, { s: [0.26, 0.32, 0.26], p: [0, 0.2, 0] }));
+    rotor = new THREE.Group(); rotor.position.y = 0.14; inner.add(rotor);
+    for (let i = 0; i < 2; i++) rotor.add(part(GEO.box, dark, { s: [1.45, 0.035, 0.12], r: [0, (i * Math.PI) / 2, 0], shadow: false }));
+    inner.add(part(GEO.torus, glowMat(st.color, 0.7), { s: [0.42, 0.42, 0.42], p: [0, -0.07, 0], r: [Math.PI / 2, 0, 0], shadow: false }));
+    inner.add(part(GEO.sphLo, eye, { s: [0.085, 0.085, 0.085], p: [0, 0.2, -0.3], shadow: false }));
+  } else if (st.id === 'tank') {
+    inner.add(part(GEO.box, dark, { s: [0.95, 0.42, 1.25], p: [0, 0.42, 0] }));
+    inner.add(part(GEO.box, dark, { s: [0.23, 0.3, 1.4], p: [-0.54, 0.3, 0] }));
+    inner.add(part(GEO.box, dark, { s: [0.23, 0.3, 1.4], p: [0.54, 0.3, 0] }));
+    inner.add(part(GEO.plate, body, { s: [0.52, 0.36, 0.52], p: [0, 0.78, 0] }));
+    inner.add(part(GEO.cylLo, body, { s: [0.12, 0.85, 0.12], p: [0, 0.8, 0.55], r: [Math.PI / 2, 0, 0] }));
+    inner.add(part(GEO.sphLo, eye, { s: [0.07, 0.07, 0.07], p: [0, 0.88, 0.4], shadow: false }));
+    inner.add(part(GEO.box, body, { s: [0.08, 0.5, 0.08], p: [0, 1.05, -0.3], r: [0.3, 0, 0] }));
+    inner.add(part(GEO.sphLo, glowMat(st.color, 0.85), { s: [0.11, 0.11, 0.11], p: [0, 1.28, -0.42], shadow: false }));
+  } else if (st.id === 'boss') {
+    inner.add(part(GEO.ico, dark, { s: [0.85, 0.9, 0.75], p: [0, 0.9, 0] }));
+    inner.add(part(GEO.plate, body, { s: [0.55, 0.5, 0.55], p: [0, 1.85, 0] }));
+    for (let i = 0; i < 2; i++) {
+      const sx = i === 0 ? -1 : 1;
+      inner.add(part(GEO.box, dark, { s: [0.24, 0.95, 0.24], p: [sx * 0.85, 0.85, 0], r: [0, 0, sx * -0.22] }));
+      inner.add(part(GEO.cone, body, { s: [0.2, 0.5, 0.2], p: [sx * 1.0, 0.3, 0], r: [Math.PI, 0, 0] }));
+      inner.add(part(GEO.cone, body, { s: [0.17, 0.42, 0.17], p: [sx * 0.42, 2.28, 0], r: [0, 0, sx * 0.5] }));
+      inner.add(part(GEO.sphLo, glowMat(st.color, 0.95), { s: [0.13, 0.13, 0.13], p: [sx * 0.28, 1.88, 0.42], shadow: false }));
+    }
+    inner.add(part(GEO.torus, glowMat(0xff4fd8, 0.8), { s: [0.7, 0.7, 0.7], p: [0, 2.5, 0], r: [Math.PI / 2, 0, 0], shadow: false }));
+    inner.add(part(GEO.oct, glowMat(st.color, 0.9), { s: [0.2, 0.34, 0.2], p: [0, 2.95, 0], shadow: false }));
+  } else if (st.id === 'runner') {
+    inner.add(part(GEO.cone, body, { s: [0.3, 0.9, 0.3], p: [0, 0.5, 0] }));
+    inner.add(part(GEO.oct, dark, { s: [0.2, 0.26, 0.2], p: [0, 1.05, 0] }));
+    inner.add(part(GEO.sphLo, glowMat(0xffffff, 0.95), { s: [0.09, 0.09, 0.09], p: [0, 1.08, 0.2], shadow: false }));
+    for (let i = 0; i < 2; i++) {
+      const sx = i === 0 ? -1 : 1;
+      inner.add(part(GEO.box, dark, { s: [0.08, 0.5, 0.08], p: [sx * 0.26, 0.28, 0], r: [0, 0, sx * 0.35] }));
+    }
+    inner.add(part(GEO.box, dark, { s: [0.34, 0.26, 0.24], p: [0, 0.16, 0.08] }));
+  } else { // grunt
+    inner.add(part(GEO.box, dark, { s: [0.52, 0.62, 0.42], p: [0, 0.62, 0] }));
+    inner.add(part(GEO.box, body, { s: [0.42, 0.2, 0.36], p: [0, 0.95, 0] }));
+    inner.add(part(GEO.box, dark, { s: [0.12, 0.42, 0.12], p: [-0.35, 0.62, 0] }));
+    inner.add(part(GEO.box, dark, { s: [0.12, 0.42, 0.12], p: [0.35, 0.62, 0] }));
+    inner.add(part(GEO.box, dark, { s: [0.16, 0.34, 0.16], p: [-0.16, 0.24, 0] }));
+    inner.add(part(GEO.box, dark, { s: [0.16, 0.34, 0.16], p: [0.16, 0.24, 0] }));
+    inner.add(part(GEO.box, body, { s: [0.34, 0.22, 0.2], p: [0, 0.92, 0.22] }));
+    inner.add(part(GEO.sphLo, eye, { s: [0.055, 0.055, 0.055], p: [-0.1, 0.96, 0.32], shadow: false }));
+    inner.add(part(GEO.sphLo, eye, { s: [0.055, 0.055, 0.055], p: [0.1, 0.96, 0.32], shadow: false }));
+  }
+
+  const bar = makeBar(1.05, st.color);
+  bar.position.y = st.air ? 1.1 : (st.id === 'boss' ? 3.5 : st.id === 'tank' ? 1.75 : 1.4);
+  g.add(bar);
+
+  const aura = new THREE.Mesh(GEO.sph, bmat(0x8ee9ff, 0.18, true));
+  aura.scale.setScalar(st.id === 'boss' ? 2.1 : st.id === 'tank' ? 1.1 : 0.75);
+  aura.position.y = st.id === 'boss' ? 1.4 : 0.6;
+  aura.visible = false; g.add(aura);
+
+  g.scale.setScalar(st.scale);
+  return { g, inner, bar, rotor, aura };
+}
+
+function spawnEnemy(type, wave) {
+  const diff = diffOf(S.diff);
+  const st = enemyStats(type, wave, diff);
+  const parts = buildEnemyMesh(st);
+  const e = {
+    id: nid++, type: st.id, st, name: st.name, air: st.air, color: st.color,
+    hp: st.hp, maxHp: st.hp, speed: st.speed, armor: st.armor,
+    g: parts.g, inner: parts.inner, bar: parts.bar, rotor: parts.rotor, aura: parts.aura,
+    dist: 0, alive: true, slowUntil: -99, slowAmt: 0, flash: 0,
+    pos: new THREE.Vector3(), ph: Math.random() * 6.28, pts: st.air ? S.airPts : S.pathPts,
+    len: st.air ? S.airLen : S.pathLen, baseY: st.air ? 2.6 : 0, bob: st.air ? 0.4 : 0.05,
+  };
+  const start = pointAtDist(e.pts, e.len, 0);
+  e.pos.set(start.x, e.baseY, start.z);
+  e.g.position.copy(e.pos);
+  S.enemies.push(e);
+
+  const portal = portalObj.group.position;
+  ringFx(_v1.set(portal.x, 0, portal.z), st.air ? 0xff4fd8 : st.color, st.air ? 4 : 2.4, 0.5, st.air ? 0.5 : 0.14);
+  if (!st.air) burst({ pos: _v2.set(start.x, 0.35, start.z), color: st.color, count: 8, speed: 5, size: 0.12, life: 0.4 });
+  return e;
+}
+
+function enemyRadius(e) { return 0.5 * e.st.scale; }
+
+function damageEnemy(e, dmg, opt = {}) {
+  if (!e.alive) return 0;
+  const d = applyArmor(dmg, e.armor, !!opt.ignoreArmor);
+  e.hp -= d;
+  e.flash = 0.12;
+  if (e.hp <= 0) { killEnemy(e, opt.source); return d; }
+  if (Math.random() < 0.35) Sound.play('hit');
+  return d;
+}
+
+function killEnemy(e, source) {
+  if (!e.alive) return;
+  e.alive = false;
+  S.kills++;
+  const rw = e.st.reward;
+  S.gold += rw; S.score += e.st.score;
+  if (source) source.kills++;
+  burst({ pos: e.pos, color: e.color, count: e.st.id === 'boss' ? 34 : 14, speed: e.st.id === 'boss' ? 12 : 7, size: e.st.id === 'boss' ? 0.3 : 0.16, life: 0.6, shape: 'oct' });
+  ringFx(e.pos, e.color, e.st.id === 'boss' ? 6 : 2.2, 0.5, 0.14);
+  if (e.st.id === 'boss') { ringFx(e.pos, 0xff4fd8, 9, 0.8, 0.1); CAM.shake = Math.max(CAM.shake, 0.6); }
+  Sound.play('death'); Sound.play('coin');
+  floatGold(e.pos, rw);
+  world.remove(e.g);
+  const i = S.enemies.indexOf(e); if (i >= 0) S.enemies.splice(i, 1);
+  if (rw >= 20) toast(`+${rw} vàng · hạ ${e.name}`, 'good');
+}
+
+const floaters = [];
+function floatGold(pos, amount) {
+  if (amount < 12) return;
+  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
+  const ctx = cv.getContext && cv.getContext('2d');
+  if (!ctx) return;
+  const tex = new THREE.CanvasTexture(cv);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  spr.scale.set(2.2, 1.1, 1); spr.position.copy(pos); spr.position.y += 1.2;
+  world.add(spr);
+  floaters.push({ spr, tex, ctx, cv, t: 0, life: 0.9, amount });
+  ctx.font = 'bold 42px ui-monospace, Menlo, monospace';
+  ctx.fillStyle = '#ffd166'; ctx.textAlign = 'center';
+  ctx.fillText('+' + amount, 64, 44);
+  tex.needsUpdate = true;
+}
+function updateFloaters(dt) {
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    f.t += dt;
+    const k = f.t / f.life;
+    if (k >= 1) { world.remove(f.spr); f.tex.dispose(); f.spr.material.dispose(); floaters.splice(i, 1); continue; }
+    f.spr.position.y += dt * 1.6;
+    f.spr.material.opacity = 1 - k * k;
+  }
+}
+
+function leakEnemy(e) {
+  e.alive = false;
+  S.leaks++;
+  S.lives -= e.st.leak;
+  CAM.shake = Math.max(CAM.shake, 0.5);
+  Sound.play('leak');
+  burst({ pos: _v1.set(basePos.x, 1.4, basePos.z), color: 0xff5d73, count: 18, speed: 8, size: 0.2, life: 0.5 });
+  ringFx(_v1.set(basePos.x, 0, basePos.z), 0xff5d73, 6, 0.6, 0.14);
+  toast(`-${e.st.leak} mạng! ${e.name} lọt vào căn cứ`, 'bad');
+  world.remove(e.g);
+  const i = S.enemies.indexOf(e); if (i >= 0) S.enemies.splice(i, 1);
+  if (S.lives <= 0) { S.lives = 0; gameOver(); }
+}
+
+function updateEnemies(dt) {
+  for (let i = S.enemies.length - 1; i >= 0; i--) {
+    const e = S.enemies[i];
+    if (!e.alive) continue;
+    const slow = S.sim < e.slowUntil;
+    const spd = e.speed * (slow ? 1 - e.slowAmt : 1);
+    e.dist += spd * dt;
+    const p = pointAtDist(e.pts, e.len, e.dist);
+    if (p.done) { leakEnemy(e); continue; }
+    const y = e.baseY + Math.sin(S.sim * (e.air ? 2.4 : 7) + e.ph) * e.bob;
+    e.pos.set(p.x, y, p.z);
+    e.g.position.copy(e.pos);
+    e.inner.rotation.y = Math.atan2(p.dx, p.dz);
+    if (e.rotor) e.rotor.rotation.y += dt * 26;
+    if (e.inner && !e.air && e.type !== 'flyer') {
+      e.inner.position.y = Math.abs(Math.sin(S.sim * 8 + e.ph)) * 0.09;
+      e.inner.rotation.z = Math.sin(S.sim * 8 + e.ph) * 0.05;
+    }
+    // thanh máu + aura làm chậm
+    e.bar.quaternion.copy(camera.quaternion);
+    const f = clamp(e.hp / e.maxHp, 0, 1);
+    const fill = e.bar.userData.fill, w = e.bar.userData.w * 0.96;
+    fill.scale.x = Math.max(0.001, w * f);
+    fill.position.x = -(w * (1 - f)) / 2;
+    _c1.setHSL(lerp(0.0, 0.33, f), 0.85, 0.55);
+    fill.material.color.copy(_c1);
+    e.aura.visible = slow;
+    if (slow) e.aura.material.opacity = 0.14 + Math.sin(S.sim * 12) * 0.05;
+    if (e.flash > 0) { e.flash -= dt; e.g.scale.setScalar(e.st.scale * (1 + Math.max(0, e.flash) * 0.6)); }
+    else e.g.scale.setScalar(e.st.scale);
+    if (S.lives <= 0) break;
+  }
+}
+
+/* -------------------------------- tháp --------------------------------- */
+function canBuild(gx, gz) {
+  if (!inGrid(gx, gz)) return false;
+  const k = key(gx, gz);
+  if (blocked.has(k) || towerAt.has(k)) return false;
+  if (gx <= 1 && gz === 3) return false;                   // cổng vào
+  if (gx >= COLS - 3 && gz === 3) return false;            // căn cứ
+  return true;
+}
+
+function makeTower(typeId, gx, gz, level = 1) {
+  const def = towerDef(typeId);
+  const group = buildTowerModel(typeId);
+  group.position.set(worldX(gx), 0.02, worldZ(gz));
+  world.add(group);
+  const t = {
+    id: nid++, type: typeId, def, gx, gz, level, invested: def.cost, cd: rnd(0, 0.25),
+    group, turret: group.userData.turret, muzzle: group.userData.muzzle, glow: group.userData.glow,
+    pips: group.userData.pips, extras: group.userData.extras, stats: towerStats(typeId, level),
+    target: null, kills: 0, dmg: 0, recoil: 0, aim: 0,
+    pos: new THREE.Vector3(worldX(gx), 0.9, worldZ(gz)), mz: new THREE.Vector3(),
+  };
+  towerAt.set(key(gx, gz), t);
+  S.towers.push(t);
+  applyTowerLevel(t);
+  return t;
+}
+
+function applyTowerLevel(t) {
+  t.stats = towerStats(t.type, t.level);
+  t.pips.forEach((p, i) => { p.visible = i < t.level - 1; });
+  t.group.scale.setScalar(1 + (t.level - 1) * 0.05);
+}
+
+function placeTower(typeId, gx, gz) {
+  const def = towerDef(typeId);
+  if (!canBuild(gx, gz)) { Sound.play('error'); toast('Ô này không thể xây', 'bad'); return false; }
+  if (S.gold < def.cost) { Sound.play('error'); toast(`Thiếu ${fmt(def.cost - S.gold)} vàng`, 'bad'); return false; }
+  S.gold -= def.cost;
+  const t = makeTower(typeId, gx, gz);
+  S.built++;
+  Sound.play('place');
+  burst({ pos: _v1.set(t.pos.x, 0.4, t.pos.z), color: def.color, count: 12, speed: 6, size: 0.14, life: 0.45 });
+  ringFx(t.pos, def.color, 2.6, 0.4, 0.12);
+  S.selected = t;
+  if (S.gold < def.cost) S.buildMode = null, makeGhost(null), indicator.grp.visible = false;
+  toast(`${def.icon} ${def.name} đã triển khai`, 'good');
+  updateHUD(); updateCards();
+  return true;
+}
+
+function upgradeTower(t) {
+  if (!t) return;
+  if (t.level >= MAX_LEVEL) { Sound.play('error'); toast('Đã đạt cấp tối đa', 'bad'); return; }
+  const cost = upgradeCost(t.type, t.level);
+  if (S.gold < cost) { Sound.play('error'); toast(`Thiếu ${fmt(cost - S.gold)} vàng để nâng cấp`, 'bad'); return; }
+  S.gold -= cost; t.invested += cost; t.level++;
+  applyTowerLevel(t);
+  Sound.play('upgrade');
+  burst({ pos: _v1.set(t.pos.x, 0.6, t.pos.z), color: t.def.color, count: 16, speed: 5, size: 0.13, life: 0.5, shape: 'oct' });
+  ringFx(t.pos, t.def.color, 3.2, 0.45, 0.14);
+  spinFx(_v1.set(t.pos.x, 1.5, t.pos.z), t.def.color, 0.5, 0.4);
+  toast(`⬆️ ${t.def.name} lên cấp ${t.level}`, 'good');
+  updateHUD(); updateInspector();
+}
+
+function sellTower(t) {
+  if (!t) return;
+  const v = sellValue(t.invested);
+  S.gold += v;
+  towerAt.delete(key(t.gx, t.gz));
+  world.remove(t.group);
+  const i = S.towers.indexOf(t); if (i >= 0) S.towers.splice(i, 1);
+  if (S.selected === t) S.selected = null;
+  Sound.play('sell');
+  burst({ pos: _v1.set(t.pos.x, 0.5, t.pos.z), color: 0xffd166, count: 12, speed: 5, size: 0.12, life: 0.4 });
+  toast(`Bán tháp, thu về ${v} vàng`, '');
+  updateHUD(); updateInspector(); updateCards();
+}
+
+/* ------------------------------ tấn công ------------------------------- */
+function acquireTarget(t) {
+  const st = t.stats;
+  let best = null, bestD = -1;
+  for (const e of S.enemies) {
+    if (!e.alive) continue;
+    if (e.air && st.air === false) continue;
+    const d = dist2d(t.pos.x, t.pos.z, e.pos.x, e.pos.z);
+    if (d > st.range) continue;
+    // ưu tiên mục tiêu đi xa nhất (gần căn cứ nhất), ưu tiên nhẹ cho trùm
+    const score = e.dist + (e.type === 'boss' ? 6 : 0);
+    if (score > bestD) { bestD = score; best = e; }
+  }
+  return best;
+}
+
+function muzzleWorld(t) {
+  t.muzzle.getWorldPosition(_v3);
+  return _v3;
+}
+
+function fire(t, st) {
+  const def = t.def;
+  const e = t.target;
+  if (!e) return;
+  const from = muzzleWorld(t).clone();
+  const aimY = e.pos.y + 0.45 * e.st.scale;
+  const to = _v2.set(e.pos.x, aimY, e.pos.z);
+
+  switch (t.type) {
+    case 'gun': {
+      spawnProjectile({ type: 'gun', from, target: e, damage: st.damage, speed: st.projectileSpeed || 42, color: 0x9ff0ff, size: 0.13, tower: t });
+      break;
+    }
+    case 'cannon': {
+      const d = Math.max(1, dist2d(from.x, from.z, to.x, to.z));
+      spawnProjectile({
+        type: 'cannon', from, target: e, damage: st.damage, speed: st.projectileSpeed || 24,
+        color: 0xffc46b, size: 0.24, tower: t, ballistic: true,
+        splash: st.splash, arcH: clamp(d * 0.16, 1.2, 5), aim: to.clone(),
+      });
+      CAM.shake = Math.max(CAM.shake, 0.12);
+      break;
+    }
+    case 'frost': {
+      spawnProjectile({ type: 'frost', from, target: e, damage: st.damage, speed: st.projectileSpeed || 30, color: 0xa8f2ff, size: 0.2, tower: t, splash: st.splash, slow: st.slow, slowTime: st.slowTime });
+      break;
+    }
+    case 'tesla': {
+      const pts = [from.clone()];
+      let cur = e, hitList = [e];
+      pts.push(_v1.set(e.pos.x, e.pos.y + 0.4, e.pos.z).clone());
+      let chain = Math.round(st.chain);
+      while (chain-- > 1) {
+        let nxt = null, nd = 1e9;
+        for (const o of S.enemies) {
+          if (!o.alive || hitList.includes(o)) continue;
+          const d = o.pos.distanceTo(cur.pos);
+          if (d < nd && d <= (st.chainRange || 6)) { nd = d; nxt = o; }
+        }
+        if (!nxt) break;
+        hitList.push(nxt);
+        pts.push(_v1.set(nxt.pos.x, nxt.pos.y + 0.4, nxt.pos.z).clone());
+        cur = nxt;
+      }
+      chainFx(pts, 0xd6b4ff, 0.16);
+      for (const o of hitList) { const d = damageEnemy(o, st.damage, { source: t }); t.dmg += d; }
+      t.glow.material.opacity = 0.9;
+      break;
+    }
+    case 'sniper': {
+      const dir = to.clone().sub(from).normalize();
+      const hitList = [];
+      for (const o of S.enemies) {
+        if (!o.alive) continue;
+        if (o.air && st.air === false) continue;
+        const rel = _v1.copy(o.pos).sub(from);
+        const along = rel.dot(dir);
+        if (along < 0 || along > st.range * 1.15) continue;
+        const perp = rel.clone().addScaledVector(dir, -along).length();
+        if (perp > 0.85 * o.st.scale + 0.25) continue;
+        hitList.push({ o, along });
+      }
+      hitList.sort((a, b) => a.along - b.along);
+      const use = hitList.slice(0, Math.max(1, Math.round(st.pierce)));
+      const end = use.length ? _v1.copy(use[use.length - 1].o.pos).setY(use[use.length - 1].o.pos.y + 0.4) : to.clone();
+      beamFx(from, end.clone(), 0xd6ffb0, 0.16, 0.06);
+      for (const h of use) { const d = damageEnemy(h.o, st.damage, { source: t, ignoreArmor: true }); t.dmg += d; }
+      burst({ pos: from, color: 0xd6ffb0, count: 6, speed: 4, size: 0.08, life: 0.2 });
+      break;
+    }
+  }
+  if (t.type === 'tesla' || t.type === 'sniper') Sound.play(t.type);
+  else Sound.play(t.type);
+  if (t.glow) { t.glow.material.opacity = 0.95; }
+  t.recoil = 1;
+  t.cd = 1 / Math.max(0.05, st.rate);
+}
+
+function updateTowers(dt) {
+  for (const t of S.towers) {
+    const st = t.stats;
+    if (t.extras && t.extras.spin) t.extras.spin.rotation.y += dt * 1.4;
+    t.cd -= dt;
+    if (t.type !== 'tesla') {
+      if (!t.target || !t.target.alive || dist2d(t.pos.x, t.pos.z, t.target.pos.x, t.target.pos.z) > st.range * 1.02) t.target = acquireTarget(t);
+      if (t.target) {
+        const want = Math.atan2(t.target.pos.x - t.pos.x, t.target.pos.z - t.pos.z);
+        let diff = want - t.turret.rotation.y;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        t.turret.rotation.y += diff * Math.min(1, dt * 11);
+        t.aim = Math.abs(diff);
+      }
+    } else {
+      t.target = acquireTarget(t);
+    }
+    if (t.recoil > 0) {
+      t.recoil = Math.max(0, t.recoil - dt * 6);
+      if (t.turret) t.turret.position.z = -0.07 * t.recoil;
+    }
+    if (t.glow && t.glow.material.opacity > 0.6) t.glow.material.opacity = Math.max(0.5, t.glow.material.opacity - dt * 1.2);
+    if (t.target && t.cd <= 0 && (t.type === 'tesla' || t.aim < 0.5)) fire(t, st);
+  }
+}
+
+/* -------------------------------- đạn ---------------------------------- */
+function spawnProjectile(o) {
+  const geo = o.type === 'cannon' ? GEO.sphLo : GEO.oct;
+  const m = new THREE.Mesh(geo, glowMat(o.color, 0.95));
+  m.scale.setScalar(o.size);
+  m.position.copy(o.from);
+  m.castShadow = false;
+  world.add(m);
+  const dir = new THREE.Vector3(0, 0, 1);
+  if (o.target) dir.copy(_v1.set(o.target.pos.x, o.target.pos.y + 0.4, o.target.pos.z)).sub(o.from).normalize();
+  const p = {
+    type: o.type, g: m, target: o.target, damage: o.damage, speed: o.speed, color: o.color,
+    size: o.size, pos: o.from.clone(), dir, life: 3.2, tower: o.tower || null,
+    splash: o.splash || 0, slow: o.slow || 0, slowTime: o.slowTime || 0,
+    ballistic: !!o.ballistic, arcH: o.arcH || 0, aim: o.aim || null, t: 0, spin: rnd(0, 6),
+  };
+  if (p.ballistic) {
+    p.T = Math.max(0.18, dist2d(p.pos.x, p.pos.z, p.aim.x, p.aim.z) / p.speed);
+  }
+  S.projectiles.push(p);
+}
+
+function explode(pos, radius, damage, opt = {}) {
+  ringFx(pos, opt.color || 0xffc46b, radius, 0.45, 0.14);
+  burst({ pos, color: opt.color || 0xffc46b, count: 20, speed: 9, size: 0.2, life: 0.45, shape: 'sph', spread: 0.8 });
+  CAM.shake = Math.max(CAM.shake, 0.22);
+  Sound.play('cannon');
+  for (const e of S.enemies.slice()) {
+    if (!e.alive) continue;
+    if (e.air && opt.air === false) continue;
+    const d = dist2d(pos.x, pos.z, e.pos.x, e.pos.z);
+    const eff = radius + enemyRadius(e);
+    if (d > eff) continue;
+    const falloff = lerp(1, 0.45, clamp(d / eff, 0, 1));
+    const dm = damage * falloff;
+    const dealt = damageEnemy(e, dm, { source: opt.source, ignoreArmor: !!opt.ignoreArmor });
+    if (opt.source) opt.source.dmg += dealt;
+    if (opt.slow && e.alive) { e.slowAmt = Math.max(e.slowAmt, opt.slow); e.slowUntil = S.sim + opt.slowTime; }
+  }
+}
+
+function updateProjectiles(dt) {
+  for (let i = S.projectiles.length - 1; i >= 0; i--) {
+    const p = S.projectiles[i];
+    let done = false;
+    if (p.ballistic) {
+      // nội suy từ điểm bắn tới điểm ngắm theo cung parabol
+      if (!p.from0) { p.from0 = p.pos.clone(); p.from0y = p.pos.y; }
+      p.t += dt;
+      const k = clamp(p.t / p.T, 0, 1);
+      const px = lerp(p.from0.x, p.aim.x, k), pz = lerp(p.from0.z, p.aim.z, k);
+      const py = lerp(p.from0y, p.aim.y, k) + p.arcH * 4 * k * (1 - k);
+      p.pos.set(px, py, pz);
+      p.g.position.copy(p.pos);
+      p.g.rotation.x += dt * 8; p.g.rotation.z += dt * 5;
+      if (k >= 1) {
+        explode(_v1.copy(p.pos).setY(Math.max(0.3, p.pos.y)), p.splash || 3.5, p.damage, { source: p.tower, color: p.color, air: true });
+        done = true;
+      }
+    } else {
+      // đạn bay có bám mục tiêu
+      if (!p.target || !p.target.alive) {
+        p.target = null;
+        let best = null, bd = 9;
+        for (const e of S.enemies) { if (!e.alive) continue; const d = e.pos.distanceTo(p.pos); if (d < bd) { bd = d; best = e; } }
+        if (best) p.target = best;
+        p.life -= dt;
+        if (p.life <= 0) done = true;
+      }
+      if (!done) {
+        if (p.target) {
+          const tp = _v1.set(p.target.pos.x, p.target.pos.y + 0.42 * p.target.st.scale, p.target.pos.z);
+          const want = _v2.copy(tp).sub(p.pos).normalize();
+          p.dir.lerp(want, clamp(dt * 9, 0, 1)).normalize();
+        }
+        p.pos.addScaledVector(p.dir, p.speed * dt);
+        p.g.position.copy(p.pos);
+        if (p.type === 'gun') p.g.lookAt(_v2.copy(p.pos).add(p.dir));
+        else { p.spin += dt * 12; p.g.rotation.set(p.spin, p.spin * 0.7, 0); }
+        if (p.target) {
+          const tp = _v1.set(p.target.pos.x, p.target.pos.y + 0.42 * p.target.st.scale, p.target.pos.z);
+          const hitR = 0.55 * p.target.st.scale + p.size + 0.15;
+          if (p.pos.distanceTo(tp) <= hitR) {
+            if (p.splash > 0) {
+              explode(p.pos, p.splash, p.damage, { source: p.tower, color: p.color, slow: p.slow, slowTime: p.slowTime, air: true });
+            } else {
+              const dealt = damageEnemy(p.target, p.damage, { source: p.tower });
+              if (p.tower) p.tower.dmg += dealt;
+              burst({ pos: tp, color: p.color, count: 5, speed: 4, size: 0.09, life: 0.25, shape: 'oct' });
+            }
+            done = true;
+          }
+        }
+      }
+    }
+    if (done) { world.remove(p.g); p.g.material.dispose(); S.projectiles.splice(i, 1); }
+  }
+}
+
+/* -------------------------------- sóng --------------------------------- */
+function startWave(auto = false) {
+  if (S.phase === 'over' || S.phase === 'victory' || S.phase === 'menu') return;
+  if (S.waveActive) return;
+  S.wave++;
+  S.waveData = buildWave(S.wave, diffOf(S.diff));
+  S.spawnIdx = 0; S.waveTimer = 0; S.waveActive = true; S.phase = 'wave';
+  if (auto && S.buildTimer > 0) {
+    const bonus = callBonus(S.buildTimer);
+    S.gold += bonus;
+    toast(`⚡ Gọi đợt sớm: +${bonus} vàng`, 'good');
+  }
+  S.buildTimer = 0;
+  Sound.play('wave');
+  toast(`🌊 Đợt ${S.wave}/${TOTAL_WAVES} bắt đầu!`, 'bad');
+  updateHUD(); updateWavePanel(); updateCards();
+}
+
+function updateSpawner(dt) {
+  if (!S.waveActive) return;
+  S.waveTimer += dt;
+  const sch = S.waveData.schedule;
+  while (S.spawnIdx < sch.length && sch[S.spawnIdx].t <= S.waveTimer) {
+    spawnEnemy(sch[S.spawnIdx].type, sch[S.spawnIdx].wave);
+    S.spawnIdx++;
+  }
+  if (S.spawnIdx >= sch.length && S.enemies.length === 0) endWave();
+}
+
+function endWave() {
+  S.waveActive = false;
+  const bonus = waveBonus(S.wave);
+  S.gold += bonus;
+  S.score += 120 + S.wave * 18;
+  Sound.play('clear');
+  toast(`✅ Thủ thành công đợt ${S.wave}! +${bonus} vàng`, 'good');
+  if (S.wave >= TOTAL_WAVES) { victory(); return; }
+  S.phase = 'build';
+  S.buildTimer = BUILD_TIME;
+  updateHUD(); updateWavePanel(); updateCards(); updateInspector();
+}
+
+function updateWaveUi() {
+  const pctTotal = clamp(S.wave / TOTAL_WAVES, 0, 1) * 100;
+  el.wavefill.style.width = pctTotal + '%';
+}
+
+/* =============================== GIAO DIỆN ============================== */
+const hud = {};
+let overlayAction = null, overlayShown = false;
+
+function hex(c) { return '#' + c.toString(16).padStart(6, '0'); }
+
+function toast(msg, kind = '') {
+  const d = document.createElement('div');
+  d.className = 'toast ' + kind;
+  d.textContent = msg;
+  el.toasts.appendChild(d);
+  while (el.toasts.children.length > 4) el.toasts.removeChild(el.toasts.firstChild);
+  setTimeout(() => {
+    d.style.transition = 'opacity .3s ease, transform .3s ease';
+    d.style.opacity = '0'; d.style.transform = 'translateY(-6px)';
+    setTimeout(() => d.remove(), 340);
+  }, 1900);
+}
+
+function buildHud() {
+  el.stats.innerHTML = [
+    '<div class="chip lives" id="hLives"><i>❤️</i><span id="vLives">0</span></div>',
+    '<div class="chip gold" id="hGold"><i>🪙</i><span id="vGold">0</span></div>',
+    '<div class="chip wave" id="hWave"><i>🌊</i><span id="vWave">0</span></div>',
+    '<div class="chip score" id="hScore"><i>⭐</i><span id="vScore">0</span></div>',
+    '<div class="chip" id="hKills"><i>☠️</i><span id="vKills">0</span></div>',
+    '<div class="chip" id="hTowers"><i>🏗️</i><span id="vTowers">0</span></div>',
+    '<div class="chip" id="hTimer"><i>⏱️</i><span id="vTimer">--</span></div>',
+  ].join('');
+  for (const k of ['Lives', 'Gold', 'Wave', 'Score', 'Kills', 'Towers', 'Timer']) {
+    hud[k] = $('h' + k); hud['v' + k] = $('v' + k);
+  }
+  el.hint.innerHTML = '<b>Chạm/kéo</b> để xoay · <b>cuộn</b> để thu phóng · <b>chọn tháp</b> dưới thanh dưới → bấm vào ô đất để xây · <b>Space</b> gọi đợt · <b>T</b> tăng tốc';
+}
+
+function pulse(node) {
+  if (!node) return;
+  node.classList.remove('pulse');
+  void node.offsetWidth;
+  node.classList.add('pulse');
+}
+let _lastHud = {};
+function updateHUD(force) {
+  const vals = {
+    Lives: S.lives, Gold: Math.floor(S.gold), Wave: S.wave, Score: S.score,
+    Kills: S.kills, Towers: S.towers.length,
+    Timer: S.waveActive ? `${S.spawnIdx}/${S.waveData ? S.waveData.totalCount : 0}` : (S.phase === 'build' ? fmtTime(S.buildTimer) : '--'),
+  };
+  for (const k in vals) {
+    if (!hud['v' + k]) continue;
+    if (_lastHud[k] === vals[k] && !force) continue;
+    hud['v' + k].textContent = k === 'Timer' ? vals[k] : fmt(vals[k]);
+    if (k === 'Lives' || k === 'Gold') pulse(hud['h' + k]);
+    _lastHud[k] = vals[k];
+  }
+  if (hud.Lives) hud.Lives.classList.toggle('low', S.lives <= 5);
+  updateWaveUi();
+}
+
+function updateCards() {
+  const sig = S.buildMode + '|' + TOWERS.map((t) => (S.gold >= t.cost ? 1 : 0)).join('') + '|' + S.towers.length;
+  if (sig === updateCards._sig) return;
+  updateCards._sig = sig;
+  el.cards.innerHTML = TOWERS.map((t) => {
+    const afford = S.gold >= t.cost;
+    return `<div class="card ${S.buildMode === t.id ? 'sel' : ''} ${afford ? '' : 'poor'}" data-tower="${t.id}" title="${t.desc}">
+      <span class="hk"><kbd>${t.hotkey}</kbd></span>
+      <div class="ic" style="color:${hex(t.color)}">${t.icon}</div>
+      <div class="nm">${t.short}</div>
+      <div class="cost">🪙 ${t.cost}</div>
+    </div>`;
+  }).join('');
+}
+
+function statBox(v, label) { return `<div class="stat"><b>${v}</b><small>${label}</small></div>`; }
+
+function updateInspector(force) {
+  const t = S.selected || S.hoverTower || null;
+  const sig = [t ? t.id + ':' + t.level : 'none', S.buildMode, S.hoverTower ? 'h' : '', S.towers.length, S.phase].join('|');
+  if (!force && sig === updateInspector._sig && performance.now() - (updateInspector._t || 0) < 480) return;
+  updateInspector._sig = sig; updateInspector._t = performance.now();
+
+  if (t) {
+    const st = t.stats, def = t.def;
+    const upCost = t.level < MAX_LEVEL ? upgradeCost(t.type, t.level) : 0;
+    const extra = [];
+    if (st.splash) extra.push(`<div class="row"><span>Bán kính nổ</span><span>${st.splash.toFixed(1)}</span></div>`);
+    if (st.slow) extra.push(`<div class="row"><span>Làm chậm</span><span>-${Math.round(st.slow * 100)}% / ${st.slowTime.toFixed(1)}s</span></div>`);
+    if (st.chain) extra.push(`<div class="row"><span>Lan sét</span><span>${st.chain} mục tiêu</span></div>`);
+    if (st.pierce) extra.push(`<div class="row"><span>Xuyên</span><span>${st.pierce} mục tiêu</span></div>`);
+    if (st.ignoreArmor) extra.push(`<div class="row"><span>Xuyên giáp</span><span>Có</span></div>`);
+    if (!st.air) extra.push(`<div class="row"><span>Mục tiêu bay</span><span style="color:var(--red)">Không bắn được</span></div>`);
+    el.inspector.innerHTML = `
+      <h3>${def.icon} ${def.name} <span class="badge">CẤP ${t.level}/${MAX_LEVEL}</span></h3>
+      <div class="grid2">
+        ${statBox(fmt(st.dps), 'DPS')}
+        ${statBox(fmt(st.damage), 'SÁT THƯƠNG')}
+        ${statBox(st.range.toFixed(1), 'TẦM BẮN')}
+        ${statBox(st.rate.toFixed(2) + '/s', 'NHỊP BẮN')}
+      </div>
+      ${extra.join('')}
+      <div class="row"><span>Đã hạ</span><span>${t.kills} mục tiêu</span></div>
+      <div class="row"><span>Tổng sát thương</span><span>${fmt(t.dmg)}</span></div>
+      <div class="row"><span>Tổng đầu tư</span><span>🪙 ${t.invested}</span></div>
+      ${t.level < MAX_LEVEL
+        ? `<button class="btn gold" id="btnUp">⬆️ Nâng cấp · 🪙 ${upCost}</button>`
+        : `<button class="btn ghost" disabled>⭐ Đã tối đa cấp ${MAX_LEVEL}</button>`}
+      <button class="btn danger" id="btnSell">💰 Bán tháp · +🪙 ${sellValue(t.invested)}</button>`;
+    const bu = $('btnUp'); if (bu) bu.onclick = () => upgradeTower(t);
+    $('btnSell').onclick = () => sellTower(t);
+  } else if (S.buildMode) {
+    const def = towerDef(S.buildMode), st = towerStats(S.buildMode, 1);
+    el.inspector.innerHTML = `
+      <h3>${def.icon} ${def.name} <span class="badge">ĐANG XÂY</span></h3>
+      <div class="grid2">
+        ${statBox(fmt(st.dps), 'DPS')}
+        ${statBox(fmt(st.damage), 'SÁT THƯƠNG')}
+        ${statBox(st.range.toFixed(1), 'TẦM BẮN')}
+        ${statBox(st.rate.toFixed(2) + '/s', 'NHỊP BẮN')}
+      </div>
+      <div class="row"><span>Giá xây</span><span>🪙 ${def.cost}</span></div>
+      <button class="btn ghost" id="btnCancel">✖️ Huỷ chọn tháp (Esc)</button>`;
+    $('btnCancel').onclick = () => cancelBuild();
+  } else {
+    el.inspector.innerHTML = `
+      <h3>🛠️ Bảng điều khiển</h3>
+      <div class="row"><span>Đợt</span><span>${S.wave}/${TOTAL_WAVES}</span></div>
+      <div class="row"><span>Tháp đang có</span><span>${S.towers.length}</span></div>
+      <div class="row"><span>Địch đã hạ</span><span>${S.kills}</span></div>
+      <div class="row"><span>Địch lọt lưới</span><span>${S.leaks}</span></div>
+      <div class="help" style="margin-top:8px">
+        Chọn một loại tháp ở thanh dưới, sau đó bấm vào <b style="display:inline">ô đất trống</b> để xây.
+        Bấm vào tháp đã xây để nâng cấp hoặc bán.
+      </div>`;
+  }
+}
+
+function waveSummaryHtml(w, active) {
+  return w.summary.map((g) => `<div class="enemy ${g.air ? 'air' : ''}">
+      <span class="c">${g.icon} ${g.count}×</span>
+      <span class="n">${g.name}</span>
+      <span class="c">${fmt(g.hpEach)} HP</span>
+    </div>`).join('');
+}
+
+function updateWavePanel() {
+  const diff = diffOf(S.diff);
+  let html = '';
+  if (S.phase === 'menu') {
+    el.wavepanel.innerHTML = '<h3>🌊 Thông tin đợt</h3><div class="help">Bấm <b style="display:inline">Bắt đầu</b> để chọn độ khó và vào trận.</div>';
+    return;
+  }
+  if (S.waveActive && S.waveData) {
+    const w = S.waveData;
+    html += `<h3>🌊 Đợt ${S.wave}/${TOTAL_WAVES} · <span class="stars">${stars(waveThreat(S.wave, diff))}</span></h3>`;
+    html += `<div class="row"><span>Đã vào trận</span><span id="wSpawn">${S.spawnIdx}/${w.totalCount}</span></div>`;
+    html += `<div class="row"><span>Còn sống</span><span id="wAlive">${S.enemies.length}</span></div>`;
+    html += `<div class="row"><span>Sát thương cần</span><span>${fmt(w.totalHp)} HP</span></div>`;
+    html += '<div class="enemylist" style="margin-top:8px">' + waveSummaryHtml(w, true) + '</div>';
+    html += `<button class="btn ghost" id="btnSpeed">${S.speed}× tốc độ (T)</button>`;
+  } else {
+    const n = Math.min(TOTAL_WAVES, S.wave + 1);
+    const w = buildWave(n, diff);
+    html += `<h3>🔮 Đợt kế tiếp · ${n}/${TOTAL_WAVES} · <span class="stars">${stars(waveThreat(n, diff))}</span></h3>`;
+    html += `<div class="row"><span>Tổng quân</span><span>${w.totalCount}</span></div>`;
+    html += '<div class="enemylist">' + waveSummaryHtml(w, false) + '</div>';
+    html += `<div class="row"><span>Tự động mở đợt</span><span id="wTime">${Math.ceil(S.buildTimer)}s</span></div>`;
+    html += `<button class="btn green" id="btnCall">⚡ Gọi đợt ngay · +🪙 <span id="wBonus">${callBonus(S.buildTimer)}</span></button>`;
+    html += `<button class="btn ghost" id="btnAuto">${S.autoStart ? '🔁 Tự động mở: BẬT' : '⏸️ Tự động mở: TẮT'}</button>`;
+  }
+  el.wavepanel.innerHTML = html;
+  const bc = $('btnCall'); if (bc) bc.onclick = () => startWave();
+  const bs = $('btnSpeed'); if (bs) bs.onclick = () => cycleSpeed();
+  const ba = $('btnAuto');
+  if (ba) ba.onclick = () => {
+    S.autoStart = !S.autoStart;
+    toast(S.autoStart ? 'Bật tự động mở đợt' : 'Tắt tự động mở đợt — bạn tự bấm gọi đợt', '');
+    updateWavePanel();
+  };
+}
+
+/** Cập nhật nhanh phần số của panel đợt (không dựng lại DOM). */
+let _wpT = 0;
+function tickWavePanel(dt) {
+  _wpT += dt;
+  if (_wpT < 0.15) return;
+  _wpT = 0;
+  const s = $('wSpawn'); if (s && S.waveData) s.textContent = `${S.spawnIdx}/${S.waveData.totalCount}`;
+  const a = $('wAlive'); if (a) a.textContent = String(S.enemies.length);
+  const t = $('wTime');
+  if (t) { t.textContent = Math.ceil(S.buildTimer) + 's'; const b = $('wBonus'); if (b) b.textContent = String(callBonus(S.buildTimer)); }
+}
+
+function updateControls() {
+  const sp = $('cSpeed'); if (sp) sp.textContent = S.speed + '×';
+  const pw = $('cPause'); if (pw) pw.textContent = S.paused ? '▶' : '⏸';
+}
+
+function buildControls() {
+  el.ctrls.innerHTML = [
+    '<button class="ctrl wide" id="cSpeed" title="Tốc độ bay của thời gian (T)">1×</button>',
+    '<button class="ctrl" id="cPause" title="Tạm dừng / tiếp tục (P)">⏸</button>',
+    '<button class="ctrl on" id="cSound" title="Bật / tắt âm thanh (M)">🔊</button>',
+    '<button class="ctrl" id="cSide" title="Ẩn / hiện bảng bên (Tab)">📊</button>',
+    '<button class="ctrl" id="cMenu" title="Hướng dẫn &amp; menu (H)">❓</button>',
+  ].join('');
+  $('cSpeed').onclick = () => cycleSpeed();
+  $('cPause').onclick = () => togglePause();
+  $('cSound').onclick = (e) => {
+    Sound.on = !Sound.on;
+    e.currentTarget.classList.toggle('on', Sound.on);
+    e.currentTarget.textContent = Sound.on ? '🔊' : '🔇';
+    if (Sound.on) { Sound.init(); Sound.resume(); }
+  };
+  $('cSide').onclick = (e) => {
+    el.side.classList.toggle('open');
+    e.currentTarget.classList.toggle('on', el.side.classList.contains('open'));
+  };
+  $('cMenu').onclick = () => showHelp();
+}
+
+/* ------------------------------ overlay -------------------------------- */
+function showOverlay(html, action) {
+  el.overlay.innerHTML = html;
+  el.overlay.classList.add('show');
+  overlayShown = true; overlayAction = action || null;
+}
+function hideOverlay() {
+  el.overlay.classList.remove('show');
+  el.overlay.innerHTML = '';
+  overlayShown = false; overlayAction = null;
+}
+
+function showMenu() {
+  const d = diffOf(S.diff);
+  const best = S.best ? `<div class="row"><span>Điểm cao nhất</span><span>${fmt(S.best)}</span></div>` : '';
+  showOverlay(`
+    <div class="modal">
+      <span class="badge">THREE.JS · WEBGL · 1 FILE HTML</span>
+      <h1>NEON DEFENSE 3D</h1>
+      <p class="sub">Tinh cầu của bạn đang bị xâm lăng. Xây tháp phòng thủ quanh <b>làn đường neon</b>, nâng cấp, và chặn đứng <b>${TOTAL_WAVES} đợt</b> quân địch — trong đó có drone bay và trùm máy khổng lồ.</p>
+      <h3 style="color:var(--dim);font-size:12px;letter-spacing:.9px;margin:0 0 8px">CHỌN ĐỘ KHÓ</h3>
+      <div class="diffs" id="diffs">
+        ${Object.values(DIFFICULTIES).map((x) => `<div class="diff ${x.id === d.id ? 'sel' : ''}" data-diff="${x.id}">
+          <div class="t">${x.icon} ${x.name}</div>
+          <div class="d">${x.desc}</div>
+          <div class="s">❤️ ${x.lives} · 🪙 ${x.gold} · HP ×${x.hpMul.toFixed(2)}</div>
+        </div>`).join('')}
+      </div>
+      <div class="helpgrid">
+        <div class="help"><b>🎯 Mục tiêu</b>Địch đi từ <span class="k">cổng tím</span> tới <span class="k">căn cứ</span>. Mỗi con lọt lưới sẽ trừ mạng của bạn.</div>
+        <div class="help"><b>🏗️ Xây dựng</b>Chọn tháp ở thanh dưới (<span class="k">1–5</span>) rồi bấm vào ô đất trống. Bấm vào tháp để nâng cấp (tối đa cấp 5).</div>
+        <div class="help"><b>🛸 Mục tiêu bay</b>Drone bay theo đường riêng trên không. Chỉ <span class="k">Súng Liên Thanh, Súng Băng, Trụ Sét, Bắn Tỉa</span> bắn được chúng.</div>
+        <div class="help"><b>⚡ Kinh tế</b>Gọi đợt sớm được thưởng vàng; mỗi đợt thủ xong cũng có thưởng. Bán tháp thu hồi 62%.</div>
+        <div class="help"><b>🎮 Điều khiển</b>Kéo để xoay, cuộn để zoom, <span class="k">Space</span> gọi đợt, <span class="k">T</span> tốc độ, <span class="k">P</span> tạm dừng, <span class="k">M</span> âm thanh.</div>
+        <div class="help"><b>💎 Mẹo</b>Pháo Nổ cực mạnh với đám đông nhưng <span class="k">không bắn được drone</span> — hãy trộn nhiều loại tháp.</div>
+      </div>
+      ${best}
+      <div class="actions">
+        <button class="btn" id="btnStart">▶️ Bắt đầu phòng thủ</button>
+        <button class="btn ghost" id="btnHelp">📖 Xem hướng dẫn</button>
+      </div>
+      <div class="foot">Đồng độ khó đã chọn có thể đổi lại ở menu này · Nhấn <b>Space</b> để vào trận nhanh</div>
+    </div>`, 'start');
+
+  el.overlay.querySelectorAll('.diff').forEach((node) => {
+    node.onclick = () => {
+      S.diff = node.dataset.diff;
+      el.overlay.querySelectorAll('.diff').forEach((n) => n.classList.toggle('sel', n === node));
+    };
+  });
+  $('btnStart').onclick = () => startGame(S.diff);
+  $('btnHelp').onclick = () => showHelp();
+}
+
+function showHelp() {
+  const wasPlaying = S.phase !== 'menu';
+  if (wasPlaying) { S.paused = true; updateControls(); }
+  showOverlay(`
+    <div class="modal">
+      <span class="badge">HƯỚNG DẪN</span>
+      <h1>Chơi thế nào?</h1>
+      <p class="sub">Mục tiêu: giữ căn cứ đến hết <b>${TOTAL_WAVES} đợt</b>. Mỗi kẻ địch lọt lưới sẽ trừ mạng theo độ nguy hiểm của nó.</p>
+      <div class="helpgrid">
+        <div class="help"><b>1. Chọn tháp</b>Bấm thẻ tháp ở thanh dưới hoặc phím <span class="k">1–5</span>. Di chuột lên bản đồ để xem trước tầm bắn.</div>
+        <div class="help"><b>2. Xây</b>Bấm vào ô đất trống viền xanh. Ô đỏ = không xây được (đường đi, đá, tháp khác).</div>
+        <div class="help"><b>3. Nâng cấp</b>Bấm vào tháp đã xây → <span class="k">⬆️ Nâng cấp</span> (tối đa cấp 5, chỉ số tăng theo cấp).</div>
+        <div class="help"><b>4. Gọi đợt</b>Hết đợt có ${BUILD_TIME}s chuẩn bị. Bấm <span class="k">⚡ Gọi đợt ngay</span> để nhận thêm vàng.</div>
+        <div class="help"><b>🛸 Drone</b>Bay theo đường khác trên không, bỏ qua mọi địa hình. Cần tháp có khả năng bắn mục tiêu bay.</div>
+        <div class="help"><b>👹 Trùm</b>Xuất hiện mỗi 5 đợt. Máu cực dày, giáp cao — ưu tiên Bắn Tỉa (xuyên giáp) và Trụ Sét.</div>
+        <div class="help"><b>🎮 Camera</b>Kéo chuột / 1 ngón để xoay, cuộn / chụm 2 ngón để zoom, kéo chuột phải hoặc <span class="k">Shift</span>+kéo để di chuyển tầm nhìn.</div>
+        <div class="help"><b>⌨️ Phím tắt</b><span class="k">Space</span> gọi đợt · <span class="k">T</span> tốc độ · <span class="k">P</span> tạm dừng · <span class="k">U</span> nâng cấp · <span class="k">X</span> bán · <span class="k">Q/E</span> xoay · <span class="k">M</span> âm thanh</div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnBack">${wasPlaying ? '▶️ Tiếp tục chơi' : '◀️ Về menu'}</button>
+      </div>
+    </div>`, wasPlaying ? 'resume' : 'menu');
+  $('btnBack').onclick = () => (wasPlaying ? resumeGame() : showMenu());
+}
+
+function showPause() {
+  showOverlay(`
+    <div class="modal" style="width:min(520px,92vw)">
+      <span class="badge">TẠM DỪNG</span>
+      <h1>Đang tạm dừng</h1>
+      <p class="sub">Đợt ${S.wave}/${TOTAL_WAVES} · ${S.enemies.length} kẻ địch trên bản đồ · ⭐ ${fmt(S.score)}</p>
+      <div class="actions">
+        <button class="btn" id="btnResume">▶️ Tiếp tục</button>
+        <button class="btn ghost" id="btnHelp2">📖 Hướng dẫn</button>
+        <button class="btn danger" id="btnQuit">🏳️ Về menu</button>
+      </div>
+    </div>`, 'resume');
+  $('btnResume').onclick = () => resumeGame();
+  $('btnHelp2').onclick = () => showHelp();
+  $('btnQuit').onclick = () => { S.paused = false; S.phase = 'menu'; showMenu(); };
+}
+
+function endStats() {
+  const total = Math.round(S.score * (1 + S.lives * 0.06));
+  return { total };
+}
+function saveBest(score) {
+  try {
+    const cur = Number(localStorage.getItem('neon-defense-best') || 0);
+    if (score > cur) { localStorage.setItem('neon-defense-best', String(score)); S.best = score; }
+    else S.best = cur;
+  } catch (e) { S.best = Math.max(S.best, score); }
+}
+function loadBest() {
+  try { S.best = Number(localStorage.getItem('neon-defense-best') || 0); } catch (e) { S.best = 0; }
+}
+
+function showEnd(win) {
+  const { total } = endStats(win ? S.score : S.score);
+  const score = win ? total : S.score;
+  saveBest(score);
+  Sound.play(win ? 'win' : 'lose');
+  showOverlay(`
+    <div class="modal">
+      <span class="badge">${win ? 'CHIẾN THẮNG' : 'THẤT THỦ'}</span>
+      <h1>${win ? '🏆 Căn cứ an toàn!' : '💀 Căn cứ đã thất thủ'}</h1>
+      <p class="sub">${win
+        ? `Bạn đã đẩy lùi toàn bộ ${TOTAL_WAVES} đợt xâm lăng ở độ khó ${diffOf(S.diff).name}. Điểm thưởng thêm nhờ giữ được ${S.lives} mạng.`
+        : `Bạn cầm cự được ${S.wave}/${TOTAL_WAVES} đợt ở độ khó ${diffOf(S.diff).name}. Thử lại với chiến thuật nhiều loại tháp hơn nhé!`}</p>
+      <div class="summary">
+        <div class="sumbox"><b>⭐ ${fmt(score)}</b><small>ĐIỂM</small></div>
+        <div class="sumbox"><b>🌊 ${S.wave}</b><small>ĐỢT ĐÃ QUA</small></div>
+        <div class="sumbox"><b>☠️ ${S.kills}</b><small>ĐỊCH ĐÃ HẠ</small></div>
+        <div class="sumbox"><b>🏗️ ${S.built}</b><small>THÁP ĐÃ XÂY</small></div>
+        <div class="sumbox"><b>❤️ ${S.lives}</b><small>MẠNG CÒN LẠI</small></div>
+        <div class="sumbox"><b>🏅 ${fmt(S.best)}</b><small>KỶ LỤC CỦA BẠN</small></div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnAgain">🔄 Chơi lại (${diffOf(S.diff).name})</button>
+        <button class="btn ghost" id="btnMenu2">🎚️ Đổi độ khó</button>
+      </div>
+    </div>`, 'restart');
+  $('btnAgain').onclick = () => startGame(S.diff);
+  $('btnMenu2').onclick = () => showMenu();
+}
+
+function gameOver() {
+  if (S.phase === 'over' || S.phase === 'victory') return;
+  S.phase = 'over'; S.paused = false; S.waveActive = false;
+  CAM.shake = 1.1;
+  burst({ pos: _v1.set(basePos.x, 2, basePos.z), color: 0xff5d73, count: 40, speed: 13, size: 0.32, life: 0.9, shape: 'oct' });
+  updateControls(); updateHUD(true);
+  showEnd(false);
+}
+function victory() {
+  S.phase = 'victory'; S.paused = false; S.waveActive = false;
+  burst({ pos: _v1.set(basePos.x, 4, basePos.z), color: 0x6ff0ff, count: 40, speed: 12, size: 0.3, life: 1.1, shape: 'oct' });
+  updateControls(); updateHUD(true);
+  showEnd(true);
+}
+
+/* -------------------------------- menu --------------------------------- */
+function resumeGame() {
+  hideOverlay();
+  S.paused = false;
+  updateControls();
+  Sound.resume();
+}
+function togglePause() {
+  if (S.phase === 'menu' || S.phase === 'over' || S.phase === 'victory') return;
+  if (overlayShown) { resumeGame(); return; }
+  S.paused = true;
+  updateControls();
+  showPause();
+}
+function cycleSpeed() {
+  if (S.phase === 'menu' || S.phase === 'over' || S.phase === 'victory') return;
+  S.speed = S.speed === 1 ? 2 : S.speed === 2 ? 3 : 1;
+  updateControls(); updateWavePanel();
+  toast(`Tốc độ ${S.speed}×`, '');
+}
+
+/* ============================== ĐIỀU KHIỂN ============================== */
+const ray = new THREE.Raycaster();
+const ptrNdc = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const hitPoint = new THREE.Vector3();
+const pointers = new Map();
+let drag = { mode: null, moved: false };
+
+function towerTile(gx, gz) { return towerAt.get(key(gx, gz)) || null; }
+
+function pickTile(cx, cy) {
+  const r = el.canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  ptrNdc.x = ((cx - r.left) / r.width) * 2 - 1;
+  ptrNdc.y = -((cy - r.top) / r.height) * 2 + 1;
+  ray.setFromCamera(ptrNdc, camera);
+  if (!ray.ray.intersectPlane(groundPlane, hitPoint)) return null;
+  const g = gridFromWorld(hitPoint.x, hitPoint.z);
+  return { gx: g.gx, gz: g.gz, x: hitPoint.x, z: hitPoint.z, outside: !inGrid(g.gx, g.gz) };
+}
+
+function selectBuild(id) {
+  if (S.phase === 'menu') return;
+  if (S.buildMode === id) { cancelBuild(); return; }
+  S.buildMode = id;
+  S.selected = null;
+  makeGhost(id);
+  updateCards(); updateInspector(true);
+  const def = towerDef(id);
+  if (S.gold < def.cost) toast(`Chưa đủ vàng cho ${def.name} (cần 🪙 ${def.cost})`, 'bad');
+  else toast(`Đã chọn ${def.icon} ${def.name} — bấm vào ô đất để xây`, '');
+  if (IS_SMALL()) el.side.classList.add('open');
+}
+
+function cancelBuild() {
+  S.buildMode = null;
+  makeGhost(null);
+  if (indicator) indicator.grp.visible = false;
+  updateCards(); updateInspector(true);
+}
+
+function panCamera(dx, dy) {
+  const scale = CAM.dist * 0.0017;
+  const st = Math.sin(CAM.theta), ct = Math.cos(CAM.theta);
+  CAM.target.x -= ct * dx * scale;
+  CAM.target.z += st * dx * scale;
+  CAM.target.x -= st * dy * scale;
+  CAM.target.z -= ct * dy * scale;
+  clampTarget();
+}
+function clampTarget() {
+  CAM.target.x = clamp(CAM.target.x, -GRID.W / 2 - 6, GRID.W / 2 + 6);
+  CAM.target.z = clamp(CAM.target.z, -GRID.D / 2 - 6, GRID.D / 2 + 6);
+  CAM.target.y = 0;
+}
+
+function onDown(e) {
+  Sound.init(); Sound.resume();
+  if (overlayShown) return;
+  if (e.target !== el.canvas) return;
+  if (e.pointerType === 'mouse' && e.button === 2) drag = { mode: 'pan', moved: false, id: e.pointerId };
+  else if (e.pointerType === 'mouse' && e.shiftKey) drag = { mode: 'pan', moved: false, id: e.pointerId };
+  else drag = { mode: 'orbit', moved: false, id: e.pointerId };
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() });
+  try { el.canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+}
+
+function onMove(e) {
+  const p = pointers.get(e.pointerId);
+  if (p) {
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    if (Math.abs(e.clientX - p.sx) + Math.abs(e.clientY - p.sy) > 7) drag.moved = true;
+    if (pointers.size >= 2) {
+      const pts = [...pointers.values()];
+      const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      if (drag.pinch) {
+        const k = drag.pinch / Math.max(1, d);
+        CAM.dist = clamp(CAM.dist * (1 + (k - 1) * 0.9), 14, 66);
+      }
+      drag.pinch = d;
+      drag.moved = true;
+    } else if (drag.mode === 'orbit') {
+      CAM.theta -= dx * 0.0062;
+      CAM.phi = clamp(CAM.phi - dy * 0.005, 0.42, 1.35);
+    } else if (drag.mode === 'pan' && (e.buttons || e.pointerType === 'touch')) {
+      panCamera(dx, dy);
+    }
+  }
+  const t = pickTile(e.clientX, e.clientY);
+  if (t && !t.outside) { S.hover = t; S.hoverTower = towerTile(t.gx, t.gz); }
+  else { S.hover = null; S.hoverTower = null; }
+}
+
+function onUp(e) {
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  if (drag.pinch && pointers.size < 2) drag.pinch = null;
+  if (overlayShown || !p) return;
+  const quick = !drag.moved && performance.now() - p.t < 600;
+  const tile = quick ? pickTile(e.clientX, e.clientY) : null;
+  if (tile && !tile.outside) {
+    if (S.buildMode) {
+      if (canBuild(tile.gx, tile.gz)) placeTower(S.buildMode, tile.gx, tile.gz);
+      else { Sound.play('error'); toast('Ô này không thể xây (đường đi / vật cản)', 'bad'); }
+    } else {
+      const t = towerTile(tile.gx, tile.gz);
+      S.selected = t || null;
+      if (t) S.hoverTower = t;
+      updateInspector(true);
+    }
+  } else if (quick && !S.buildMode && S.selected) {
+    S.selected = null; updateInspector(true);
+  }
+  if (pointers.size === 0) drag = { mode: null, moved: false };
+}
+
+function onWheel(e) {
+  if (overlayShown) return;
+  e.preventDefault();
+  const k = Math.exp(clamp(e.deltaY, -220, 220) * 0.0011);
+  CAM.dist = clamp(CAM.dist * k, 14, 66);
+}
+
+function onKey(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (overlayShown) {
+    if ((k === 'p' || k === 'P') && overlayAction === 'resume') { resumeGame(); return; }
+    if (k === ' ' || k === 'Enter' || k === 'Escape') {
+      e.preventDefault();
+      if (k === 'Escape' && S.phase !== 'menu' && S.phase !== 'over' && S.phase !== 'victory') resumeGame();
+      else if (typeof overlayAction === 'string') {
+        if (overlayAction === 'start') startGame(S.diff);
+        else if (overlayAction === 'resume') resumeGame();
+        else if (overlayAction === 'restart') startGame(S.diff);
+        else if (overlayAction === 'menu') showMenu();
+      }
+    }
+    if (k === 'm' || k === 'M') toggleSoundKey();
+    return;
+  }
+  if (k >= '1' && k <= '5') { const t = TOWERS[Number(k) - 1]; if (t) selectBuild(t.id); }
+  else if (k === 'Escape') { if (S.buildMode) cancelBuild(); else { S.selected = null; updateInspector(true); } }
+  else if (k === ' ') { e.preventDefault(); if (S.phase === 'build') startWave(); else togglePause(); }
+  else if (k === 't' || k === 'T') cycleSpeed();
+  else if (k === 'p' || k === 'P') togglePause();
+  else if (k === 'm' || k === 'M') toggleSoundKey();
+  else if (k === 'h' || k === 'H' || k === '?') showHelp();
+  else if (k === 'Tab') { e.preventDefault(); el.side.classList.toggle('open'); }
+  else if (k === 'u' || k === 'U') { if (S.selected) upgradeTower(S.selected); }
+  else if (k === 'x' || k === 'X') { if (S.selected) sellTower(S.selected); }
+  else if (k === 'q' || k === 'Q') CAM.theta -= 0.22;
+  else if (k === 'e' || k === 'E') CAM.theta += 0.22;
+  else if (k === 'ArrowLeft') { CAM.target.x -= 2.2; clampTarget(); }
+  else if (k === 'ArrowRight') { CAM.target.x += 2.2; clampTarget(); }
+  else if (k === 'ArrowUp') { CAM.target.z -= 2.2; clampTarget(); }
+  else if (k === 'ArrowDown') { CAM.target.z += 2.2; clampTarget(); }
+  else if (k === '+' || k === '=') CAM.dist = clamp(CAM.dist * 0.9, 14, 66);
+  else if (k === '-' || k === '_') CAM.dist = clamp(CAM.dist * 1.1, 14, 66);
+}
+function toggleSoundKey() {
+  Sound.init();
+  Sound.on = !Sound.on;
+  const b = $('cSound');
+  if (b) { b.classList.toggle('on', Sound.on); b.textContent = Sound.on ? '🔊' : '🔇'; }
+  toast(Sound.on ? 'Âm thanh: BẬT' : 'Âm thanh: TẮT', '');
+  if (Sound.on) Sound.resume();
+}
+
+function bindInput() {
+  const cv = el.canvas;
+  cv.addEventListener('pointerdown', onDown);
+  cv.addEventListener('contextmenu', (e) => e.preventDefault());
+  cv.addEventListener('wheel', onWheel, { passive: false });
+  window.addEventListener('pointermove', onMove, { passive: true });
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('blur', () => { if (S.phase !== 'menu' && !overlayShown && S.phase !== 'over' && S.phase !== 'victory') togglePause(); });
+  el.cards.addEventListener('click', (e) => {
+    const card = e.target.closest('[data-tower]');
+    if (card) selectBuild(card.dataset.tower);
+  });
+}
+
+/* -------------------------------- camera ------------------------------- */
+function updateCamera(dt) {
+  CAM.phi = clamp(CAM.phi, 0.42, 1.35);
+  CAM.dist = clamp(CAM.dist, 14, 66);
+  const sp = Math.sin(CAM.phi);
+  camera.position.set(
+    CAM.target.x + Math.sin(CAM.theta) * CAM.dist * sp,
+    Math.max(3.5, Math.cos(CAM.phi) * CAM.dist + 2.5),
+    CAM.target.z + Math.cos(CAM.theta) * CAM.dist * sp
+  );
+  camera.lookAt(CAM.target.x, CAM.target.y, CAM.target.z);
+  if (CAM.shake > 0.002) {
+    camera.position.x += rnd(-1, 1) * CAM.shake * 0.42;
+    camera.position.y += rnd(-1, 1) * CAM.shake * 0.3;
+    camera.position.z += rnd(-1, 1) * CAM.shake * 0.42;
+    CAM.shake = Math.max(0, CAM.shake - dt * 1.9);
+  } else CAM.shake = 0;
+}
+
+function updateHoverVisuals() {
+  if (ghost && S.buildMode) {
+    if (!S.hover) { ghost.visible = false; indicator.grp.visible = false; }
+    else updateGhost();
+  } else if (indicator && !S.buildMode) {
+    // hiện tầm bắn của tháp đang chọn / đang trỏ tới
+    const t = S.selected || S.hoverTower;
+    if (t) {
+      indicator.grp.visible = true;
+      indicator.grp.position.set(t.pos.x, 0, t.pos.z);
+      const r = t.stats.range;
+      indicator.disc.scale.set(r, 1, r);
+      indicator.ring.scale.set(r, 1, r);
+      _c1.setHex(t.def.color);
+      indicator.disc.material.color.copy(_c1);
+      indicator.ring.material.color.copy(_c1);
+      indicator.tile.material.color.copy(_c1);
+      indicator.tile.scale.set(t === S.hoverTower ? 1 : 0.001, 1, t === S.hoverTower ? 1 : 0.001);
+      indicator.outline.material.color.copy(_c1);
+    } else indicator.grp.visible = false;
+  } else if (indicator) indicator.grp.visible = false;
+}
+
+/* ------------------------------ vòng lặp ------------------------------- */
+let lastT = 0;
+
+function tick(realDt) {
+  const running = !S.paused && S.phase !== 'menu' && S.phase !== 'over' && S.phase !== 'victory';
+  const dt = running ? realDt * S.speed : 0;
+  const amb = realDt;
+
+  // hiệu ứng nền luôn sống động
+  if (portalObj) {
+    portalObj.ring1.rotation.z += amb * 0.8;
+    portalObj.ring2.rotation.z -= amb * 1.3;
+    portalObj.hole.material.opacity = 0.13 + Math.sin(S.sim * 2.6) * 0.06;
+    portalObj.light.intensity = 105 + Math.sin(S.sim * 3.4) * 40;
+  }
+  if (baseObj) {
+    baseObj.ring.rotation.z += amb * 0.45;
+    baseObj.core.rotation.y += amb * 0.85;
+    baseObj.core.position.y = 2.5 + Math.sin(S.sim * 1.5) * 0.18;
+    baseObj.dome.material.opacity = 0.075 + Math.sin(S.sim * 1.1) * 0.022;
+    baseObj.light.intensity = 85 + Math.sin(S.sim * 2.1) * 25;
+  }
+  for (const a of animGroups) {
+    if (a.kind === 'crystal') {
+      a.obj.rotation.y += amb * 0.35;
+      const s = 1 + Math.sin(S.sim * 1.8 + a.ph) * 0.06;
+      a.obj.scale.set(s, s, s);
+    }
+  }
+
+  if (running) {
+    S.sim += dt;
+    if (S.phase === 'build') {
+      S.buildTimer -= dt;
+      if (S.buildTimer <= 0) {
+        S.buildTimer = 0;
+        if (S.autoStart) startWave(true);
+      }
+    }
+    updateSpawner(dt);
+    updateEnemies(dt);
+    updateTowers(dt);
+    updateProjectiles(dt);
+    updateFX(dt);
+  } else if (FX.length && S.phase !== 'menu') {
+    updateFX(realDt * 0.4);
+  }
+
+  updateFloaters(realDt);
+  updateCamera(realDt);
+  updateHoverVisuals();
+  updateHUD();
+  tickWavePanel(realDt);
+  updateInspector();
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!lastT) lastT = now;
+  let dt = (now - lastT) / 1000;
+  lastT = now;
+  if (!(dt > 0)) dt = 1 / 60;
+  dt = Math.min(dt, 0.05);
+  tick(dt);
+  try { renderer.render(scene, camera); } catch (e) { /* tránh treo vòng lặp */ }
+}
+
+function resize() {
+  if (!renderer) return;
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / Math.max(1, h);
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(w, h, false);
+}
+
+/* ------------------------------ bắt đầu game --------------------------- */
+function startGame(diffId) {
+  const d = diffOf(diffId);
+  S.diff = d.id;
+  S.gold = d.gold; S.lives = d.lives; S.wave = 0; S.score = 0; S.kills = 0; S.leaks = 0; S.built = 0;
+  S.waveActive = false; S.waveData = null; S.spawnIdx = 0; S.waveTimer = 0;
+  S.buildTimer = BUILD_TIME; S.buildMode = null; S.selected = null; S.hover = null; S.hoverTower = null;
+  S.paused = false; S.speed = 1; S.autoStart = true; S.sim = 0; CAM.shake = 0;
+
+  for (const e of S.enemies) world.remove(e.g);
+  for (const t of S.towers) world.remove(t.group);
+  for (const p of S.projectiles) world.remove(p.g);
+  S.enemies.length = 0; S.towers.length = 0; S.projectiles.length = 0;
+  towerAt.clear();
+  cancelBuild();
+  makeGhost(null);
+  if (indicator) indicator.grp.visible = false;
+
+  CAM.target.set(0, 0, 0.5); CAM.theta = -0.7; CAM.phi = 0.82; CAM.dist = 42;
+  Sound.init(); Sound.resume();
+  hideOverlay();
+  S.phase = 'build';
+  _lastHud = {}; updateCards._sig = null; updateInspector._sig = null;
+  updateHUD(true); updateCards(); updateWavePanel(); updateInspector(true); updateControls();
+  toast(`Sẵn sàng! Xây tháp rồi bấm ⚡ Gọi đợt`, 'good');
+}
+
+function boot() {
+  try {
+    initRenderer();
+    buildIndicator();
+    buildPathData();
+    buildHud();
+    buildControls();
+    bindInput();
+    resize();
+    loadBest();
+    S.phase = 'menu';
+    updateCards(); updateWavePanel(); updateInspector(true); updateHUD(true); updateControls();
+    window.addEventListener('resize', resize);
+    requestAnimationFrame(frame);
+    window.NEON = {
+      S, TOWERS, ENEMIES, DIFFICULTIES, GRID, TOTAL_WAVES, MAX_LEVEL, BUILD_TIME,
+      startGame, startWave, placeTower, upgradeTower, sellTower, buildWave, towerStats,
+      upgradeCost, sellValue, selectBuild, cancelBuild, tick, frame, Sound, canBuild,
+      spawnEnemy, damageEnemy, explode, diffOf, pathTiles, worldPos, enemyStats,
+      enemyStatsOf: enemyStats, applyArmor, waveBonus, callBonus, waveThreat, stars, fmt,
+      scene, camera, renderer, CAM, FX, blocked, towerAt, basePos, portalObj, baseObj,
+    };
+    showMenu();
+  } catch (err) {
+    console.error(err);
+    el.fatal.style.display = 'grid';
+    el.fatal.innerHTML = '<div><h2 style="margin:0 0 8px">⚠️ Không khởi động được WebGL</h2>'
+      + '<p style="color:#8ea5c9;font-size:13px;max-width:520px;margin:0 auto">Trình duyệt của bạn có thể đã tắt WebGL hoặc thiết bị quá cũ. '
+      + 'Hãy thử Chrome/Edge/Firefox bản mới, hoặc bật tăng tốc phần cứng trong cài đặt trình duyệt.</p>'
+      + '<pre style="margin-top:14px;font-size:11px;color:#5d719a;white-space:pre-wrap">' + String(err && err.message || err) + '</pre></div>';
+  }
+}
+boot();

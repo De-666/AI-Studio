@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "tsc && vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 5173"
+    "preview": "vite preview --host 0.0.0.0 --port 5173",
+    "game": "node game/serve.mjs 5173",
+    "game:build": "node game/build.mjs",
+    "game:test": "node game/test/run.mjs",
+    "game:balance": "node game/test/balance.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

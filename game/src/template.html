@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#05080f" />
+<title>Neon Defense 3D — Phòng Thủ Tinh Cầu (Three.js)</title>
+<style>
+:root{
+  --bg:#05080f; --panel:rgba(11,17,30,.82); --panel2:rgba(16,24,41,.92);
+  --line:rgba(122,190,255,.16); --line2:rgba(122,190,255,.34);
+  --text:#dce8ff; --dim:#8ea5c9; --cyan:#3ddcff; --mag:#ff4fd8; --gold:#ffd166;
+  --green:#5cffa8; --red:#ff5d73; --violet:#b98cff; --orange:#ffa63d;
+  --r:14px; --sh:0 10px 30px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif}
+#game{position:fixed;inset:0}
+canvas#c{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+kbd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;padding:1px 5px;border-radius:5px;
+  border:1px solid var(--line2);background:rgba(255,255,255,.05);color:var(--dim)}
+
+/* ------------------------------- HUD ------------------------------- */
+#hud{position:absolute;inset:0;pointer-events:none;user-select:none}
+#hud > *{pointer-events:auto}
+.glass{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--sh);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+
+.topbar{position:absolute;top:10px;left:10px;right:10px;display:flex;gap:8px;align-items:center;flex-wrap:nowrap}
+.brand{display:flex;align-items:center;gap:9px;padding:7px 12px}
+.brand .logo{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;font-size:15px;
+  background:linear-gradient(140deg,rgba(61,220,255,.25),rgba(255,79,216,.25));border:1px solid var(--line2);
+  box-shadow:0 0 16px rgba(61,220,255,.35)}
+.brand b{font-size:13.5px;letter-spacing:.4px;display:block;line-height:1.1}
+.brand small{color:var(--dim);font-size:10px;letter-spacing:.3px}
+.stats{display:flex;gap:7px;align-items:center;flex-wrap:wrap;flex:1;min-width:0}
+.chip{display:flex;align-items:center;gap:6px;padding:6px 11px;font-size:12.5px;font-weight:600;
+  background:var(--panel);border:1px solid var(--line);border-radius:11px;backdrop-filter:blur(10px);white-space:nowrap}
+.chip i{font-style:normal;font-size:13px;line-height:1}
+.chip.lives.low{border-color:rgba(255,93,115,.6);box-shadow:0 0 14px rgba(255,93,115,.35);color:#ffd7dd}
+.chip.gold{color:var(--gold)} .chip.wave{color:var(--cyan)} .chip.score{color:var(--violet)}
+.chip.pulse{animation:pop .35s ease}
+@keyframes pop{0%{transform:scale(1)}45%{transform:scale(1.14)}100%{transform:scale(1)}}
+.ctrls{display:flex;gap:6px;align-items:center}
+.ctrl{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);color:var(--text);font-size:14px;transition:.15s}
+.ctrl:hover{border-color:var(--line2);transform:translateY(-1px);background:var(--panel2)}
+.ctrl.on{color:var(--cyan);border-color:rgba(61,220,255,.5);box-shadow:0 0 12px rgba(61,220,255,.25)}
+.ctrl.wide{width:auto;padding:0 10px;font-size:12px;font-weight:700}
+
+.wavebar{position:absolute;top:56px;left:10px;right:10px;height:5px;border-radius:99px;overflow:hidden;
+  background:rgba(255,255,255,.06);border:1px solid var(--line)}
+.wavebar>i{position:absolute;inset:0;width:0%;border-radius:99px;
+  background:linear-gradient(90deg,var(--cyan),var(--violet),var(--mag));box-shadow:0 0 12px rgba(61,220,255,.6);transition:width .18s}
+
+.side{position:absolute;right:10px;top:76px;width:296px;display:flex;flex-direction:column;gap:9px}
+.panel{padding:12px;border-radius:var(--r);background:var(--panel);border:1px solid var(--line);
+  box-shadow:var(--sh);backdrop-filter:blur(10px)}
+.panel h3{margin:0 0 9px;font-size:12px;letter-spacing:.9px;text-transform:uppercase;color:var(--dim);font-weight:700}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;padding:3px 0}
+.row span:last-child{font-weight:700}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 10px}
+.stat{background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:10px;padding:6px 8px}
+.stat b{display:block;font-size:13.5px;font-weight:700}
+.stat small{color:var(--dim);font-size:10px;letter-spacing:.3px}
+.btn{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;padding:9px 10px;border-radius:11px;
+  cursor:pointer;font-size:12.5px;font-weight:700;color:#04121c;border:0;transition:.15s;
+  background:linear-gradient(135deg,var(--cyan),#7fe9ff)}
+.btn:hover{transform:translateY(-1px);filter:brightness(1.07)}
+.btn:disabled{opacity:.42;cursor:not-allowed;transform:none;filter:grayscale(.6)}
+.btn.gold{background:linear-gradient(135deg,var(--gold),#ffe6a6);color:#2a1e00}
+.btn.green{background:linear-gradient(135deg,var(--green),#b9ffdc);color:#032616}
+.btn.ghost{background:rgba(255,255,255,.05);color:var(--text);border:1px solid var(--line2)}
+.btn.danger{background:rgba(255,93,115,.16);color:#ffd0d7;border:1px solid rgba(255,93,115,.45)}
+.btn + .btn{margin-top:7px}
+.enemylist{display:flex;flex-direction:column;gap:3px;margin-bottom:9px}
+.enemy{display:flex;align-items:center;gap:7px;font-size:12px;padding:3px 6px;border-radius:8px;background:rgba(255,255,255,.03)}
+.enemy .n{flex:1;color:var(--text)} .enemy .c{color:var(--dim);font-weight:700}
+.enemy.air .n::after{content:' ✈';color:var(--mag);font-size:10px}
+.stars{color:var(--gold);letter-spacing:1px;font-size:12px}
+
+.bottombar{position:absolute;left:10px;right:10px;bottom:10px;display:flex;gap:10px;align-items:flex-end}
+.cards{display:flex;gap:8px;padding:9px;border-radius:var(--r);background:var(--panel);border:1px solid var(--line);
+  box-shadow:var(--sh);backdrop-filter:blur(10px);overflow-x:auto;max-width:100%;scrollbar-width:thin}
+.card{position:relative;flex:0 0 auto;width:92px;padding:8px 7px 7px;border-radius:12px;cursor:pointer;text-align:center;
+  background:rgba(255,255,255,.035);border:1px solid var(--line);transition:.15s}
+.card:hover{transform:translateY(-3px);border-color:var(--line2);background:rgba(255,255,255,.07)}
+.card .ic{font-size:19px;line-height:1;filter:drop-shadow(0 0 8px currentColor)}
+.card .nm{font-size:10.5px;font-weight:700;margin-top:5px;line-height:1.15;height:26px;display:grid;place-items:center}
+.card .cost{font-size:11.5px;font-weight:800;color:var(--gold);margin-top:2px}
+.card .hk{position:absolute;top:4px;left:5px}
+.card.sel{border-color:var(--cyan);box-shadow:0 0 0 1px rgba(61,220,255,.5),0 0 20px rgba(61,220,255,.3);
+  background:linear-gradient(180deg,rgba(61,220,255,.16),rgba(61,220,255,.04))}
+.card.poor{opacity:.45;filter:grayscale(.5)}
+.hint{flex:1;min-width:0;font-size:11.5px;color:var(--dim);padding:9px 12px;border-radius:var(--r);
+  background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(10px);line-height:1.5}
+.hint b{color:var(--text)}
+
+.toasts{position:absolute;left:50%;top:76px;transform:translateX(-50%);display:flex;flex-direction:column;
+  gap:6px;align-items:center;pointer-events:none}
+.toast{padding:7px 14px;border-radius:99px;font-size:12px;font-weight:700;background:rgba(8,14,26,.9);
+  border:1px solid var(--line2);box-shadow:var(--sh);animation:tin .25s ease}
+.toast.bad{border-color:rgba(255,93,115,.6);color:#ffd0d7}
+.toast.good{border-color:rgba(92,255,168,.5);color:#c9ffe4}
+@keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+/* ---------------------------- overlay / menu ---------------------------- */
+.overlay{position:absolute;inset:0;display:none;place-items:center;background:radial-gradient(ellipse at 50% 40%,rgba(9,16,30,.72),rgba(3,5,10,.94));
+  backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);pointer-events:auto;overflow:auto;padding:22px}
+.overlay.show{display:grid}
+.modal{width:min(720px,94vw);border-radius:20px;padding:22px 22px 18px;background:linear-gradient(180deg,rgba(16,24,41,.95),rgba(9,14,26,.96));
+  border:1px solid var(--line2);box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 60px rgba(61,220,255,.09);animation:min .3s ease}
+@keyframes min{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+.modal h1{margin:0;font-size:30px;letter-spacing:1px;line-height:1.05;
+  background:linear-gradient(92deg,var(--cyan),var(--violet) 55%,var(--mag));-webkit-background-clip:text;background-clip:text;color:transparent}
+.modal .sub{color:var(--dim);font-size:13px;margin:7px 0 16px;line-height:1.6}
+.diffs{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
+.diff{padding:11px;border-radius:13px;cursor:pointer;text-align:center;background:rgba(255,255,255,.04);
+  border:1px solid var(--line);transition:.15s}
+.diff:hover{transform:translateY(-2px);border-color:var(--line2)}
+.diff.sel{border-color:var(--cyan);background:linear-gradient(180deg,rgba(61,220,255,.16),rgba(61,220,255,.03));
+  box-shadow:0 0 20px rgba(61,220,255,.25)}
+.diff .t{font-size:14px;font-weight:800;margin-bottom:3px} .diff .d{font-size:10.5px;color:var(--dim);line-height:1.4}
+.diff .s{font-size:10.5px;color:var(--gold);margin-top:5px}
+.helpgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:9px;margin-bottom:14px}
+.help{padding:10px 11px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:11.5px;line-height:1.6;color:var(--dim)}
+.help b{color:var(--text);display:block;margin-bottom:4px;font-size:12px}
+.help .k{color:var(--cyan);font-weight:700}
+.summary{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:14px 0}
+.sumbox{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.sumbox b{display:block;font-size:19px} .sumbox small{color:var(--dim);font-size:10.5px;letter-spacing:.4px}
+.actions{display:flex;gap:9px;flex-wrap:wrap}
+.actions .btn{width:auto;flex:1;min-width:150px;padding:11px 16px;font-size:13.5px;margin:0}
+.foot{margin-top:14px;font-size:10.5px;color:#5d719a;text-align:center;line-height:1.6}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:800;letter-spacing:.5px;
+  background:rgba(255,79,216,.16);border:1px solid rgba(255,79,216,.4);color:#ffd3f5}
+#fatal{display:none;place-items:center;position:absolute;inset:0;background:#05080f;color:var(--text);text-align:center;padding:30px;font-size:14px;line-height:1.7}
+
+@media (max-width:900px){
+  .side{top:auto;bottom:88px;right:10px;width:min(92vw,300px);display:none}
+  .side.open{display:flex}
+  .hint{display:none}
+  .brand small{display:none}
+  .modal h1{font-size:23px}
+  .diffs{grid-template-columns:1fr}
+  .card{width:78px}
+}
+@media (max-width:600px){
+  .brand{padding:6px 9px} .brand b{font-size:11.5px}
+  .chip{padding:5px 8px;font-size:11px}
+  .card{width:70px;padding:6px 5px 5px} .card .ic{font-size:16px} .card .nm{font-size:9.5px;height:24px}
+  .ctrl{width:30px;height:30px;font-size:12px}
+  .summbox b{font-size:16px}
+}
+</style>
+</head>
+<body>
+<div id="game">
+  <canvas id="c"></canvas>
+
+  <div id="hud">
+    <div class="topbar">
+      <div class="brand glass">
+        <span class="logo">◈</span>
+        <div><b>NEON DEFENSE 3D</b><small>Phòng thủ tinh cầu · Three.js</small></div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="ctrls" id="ctrls"></div>
+    </div>
+
+    <div class="wavebar"><i id="wavefill"></i></div>
+
+    <div class="side" id="side">
+      <div class="panel" id="inspector"></div>
+      <div class="panel" id="wavepanel"></div>
+    </div>
+
+    <div class="bottombar">
+      <div class="cards" id="cards"></div>
+      <div class="hint" id="hint"></div>
+    </div>
+
+    <div class="toasts" id="toasts"></div>
+    <div class="overlay" id="overlay"></div>
+  </div>
+
+  <div id="fatal"></div>
+</div>
+
+<!-- Three.js r160 (MIT) được nhúng sẵn để file chạy offline, không cần CDN -->
+<script>/*__THREE__*/</script>
+<!--__EXTRA__-->
+<!-- Toàn bộ logic game (path/wave/tower + engine Three.js + giao diện) -->
+<script>/*__GAME__*/</script>
+</body>
+</html>
