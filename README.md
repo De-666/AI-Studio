@@ -5,6 +5,51 @@
 Giao diện lấy cảm hứng từ **Leonardo AI** (Image Studio, dark neon, gallery masonry) + **ChatGPT Workspace** (Projects, Pin, Recent, quản lý chat theo ngữ cảnh).
 
 > Live preview đang chạy trên port 5173 — mở LIVE PREVIEW trong Arena để dùng ngay.
+> (Nếu bạn muốn xem web app của AI Studio thay vì game, chạy `npm run dev`.)
+
+## 🎮 Kèm theo: game 3D "Neon Defense"
+
+Repo này có thêm một **game tower defense 3D bằng Three.js**, đóng gói thành **một file HTML duy nhất**:
+[`game3d.html`](./game3d.html) — mở là chơi, không cần internet/CDN.
+
+- 22×16 ô đấu trường neon, đường đi uốn lượn, cổng không gian & căn cứ phát sáng
+- 5 loại tháp (liên thanh · pháo nổ · súng băng · trụ sét · bắn tỉa) × 5 cấp nâng cấp
+- 6 bản đồ (20 → 40 đợt, lưới & bối cảnh riêng), bảng xếp hạng top 10 mỗi bản đồ, 8 loại địch + trùm (quái vật tách đàn, alien dịch chuyển, drone bay đường riêng), 3 độ khó, tiếng động tổng hợp bằng WebAudio
+- HUD/menu/điều khiển đầy đủ cho **chuột · bàn phím · cảm ứng**
+
+```bash
+npm run game          # chơi ngay tại http://localhost:5173/game3d.html
+npm run game:build    # dựng lại game3d.html từ game/src/
+npm run game:test     # 451 kiểm tra headless (logic + scene graph + frustum)
+npm run game:balance  # bot tự chơi để đo cân bằng độ khó
+```
+
+Chi tiết gameplay, kiến trúc và cách tinh chỉnh: [`game/README.md`](./game/README.md).
+
+## 🗂️ Repo như một hub đa dự án (Arena.ai)
+
+Repo này được dùng như **kho chứa game & dự án thử nghiệm**, theo đúng quy ước **1 dự án = 1 branch**:
+mỗi phiên Arena.ai tự sinh một branch `arena/<id>` — branch đó là "phòng làm việc" riêng của dự án
+(code, lịch sử commit, preview nằm trọn trong đó), nhờ vậy các dự án không giẫm chân nhau.
+Nhánh `main` giữ trang hub và lõi AI Studio dùng chung.
+
+- **Trang hub**: [`projects.html`](./projects.html) — liệt kê mọi dự án, branch, entry, nút mở nhanh; sinh tự động từ [`projects.json`](./projects.json)
+- **CLI quản lý**: `tools/projects.mjs`
+
+```bash
+npm run projects                                        # bảng dự án (kèm branch đang đứng)
+npm run projects:check                                  # kiểm tra branch/entry còn đúng không
+npm run project:new -- "Game bắn máy bay" --type game    # tạo branch proj/<slug> + khung dự án + commit đầu tiên
+npm run hub                                             # sinh lại projects.html từ projects.json
+```
+
+| Dự án | Loại | Branch | Entry |
+|---|---|---|---|
+| AI Studio — Combo Model Workspace | web app | `main` | `index.html` |
+| Neon Defense 3D — Tower Defense | game | `arena/01a0b34c-ai-studio` | `game3d.html` |
+
+> Tạo dự án bằng Arena: mở **phiên Arena mới** cho dự án đó → Arena tự cấp branch riêng, bạn chỉ cần
+> đăng ký nó vào `projects.json` (hoặc chạy `npm run hub` sau khi thêm).
 
 ## ✨ Tính năng chính
 

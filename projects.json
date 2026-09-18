@@ -1,0 +1,39 @@
+{
+  "$convention": "1 DỰ ÁN = 1 BRANCH. Mỗi phiên Arena.ai tự sinh 1 branch (arena/<id>) — branch đó chính là 'phòng làm việc' của dự án: code, lịch sử commit, preview đều nằm trong đó. main chỉ giữ trang hub + lõi chung (AI Studio).",
+  "hub": {
+    "title": "De-666 / AI-Studio — Arena.ai Repo Hub",
+    "note": "Sinh lại trang này bằng: npm run hub",
+    "howto": [
+      "Mở phiên Arena mới cho dự án mới → Arena tự tạo branch arena/<id> cho phiên đó.",
+      "Hoặc tạo branch ngay trong máy: npm run project:new -- \"Tên dự án\" --type game",
+      "Mỗi dự án nằm ở một thư mục riêng, entry tĩnh (index.html) để mở/preview độc lập.",
+      "Merge xong thì xoá branch, hoặc giữ lại nếu muốn tiếp tục phát triển dự án đó."
+    ]
+  },
+  "projects": [
+    {
+      "id": "ai-studio",
+      "name": "AI Studio — Combo Model Workspace",
+      "type": "webapp",
+      "icon": "sparkles",
+      "branch": "main",
+      "dir": ".",
+      "entry": "index.html",
+      "run": "npm run dev",
+      "status": "active",
+      "desc": "Web app React + Vite: gom nhiều provider AI qua API key, ghép Combo model và tự switch khi hết quota, Chat / Image Studio / Projects."
+    },
+    {
+      "id": "neon-defense",
+      "name": "Neon Defense 3D — Tower Defense",
+      "type": "game",
+      "icon": "tower",
+      "branch": "arena/01a0b34c-ai-studio",
+      "dir": ".",
+      "entry": "game3d.html",
+      "run": "npm run game",
+      "status": "shipped",
+      "desc": "Game tower defense 3D bằng Three.js, 1 file HTML chạy offline: 6 bản đồ (20 → 40 đợt, lưới/đường đi/hệ số riêng), bảng xếp hạng top 10 mỗi bản đồ, 5 loại tháp × 5 cấp, 8 loại địch (quái vật tách đàn, alien dịch chuyển tức thời, drone bay), 451 test headless gồm kiểm tra scene graph & frustum."
+    }
+  ]
+}

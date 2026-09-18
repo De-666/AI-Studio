@@ -1,0 +1,8 @@
+{
+  "name": "neon-defense-tests",
+  "private": true,
+  "type": "module",
+  "description": "Harness test headless cho game3d.html (jsdom + stub WebGL)",
+  "scripts": { "test": "node run.mjs" },
+  "devDependencies": { "jsdom": "^24.1.0" }
+}

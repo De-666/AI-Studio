@@ -1,0 +1,9 @@
+<!-- Icon địch "Quái Vật Đột Biến" — bản tự vẽ, có thể GHI ĐÈ bằng icon Flaticon:
+     tải file về, ghi đè chính tệp này (giữ tên monster.svg), rồi chạy: npm run game:build -->
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M4.6 20.6c-1.5-3.5-.5-6.7 1.4-8.9C4.2 8.6 5.4 4.4 8.7 3.3c1.7-.6 3.3-.1 4.7.9 1.2-.7 3.1-.7 4.6.2 3.1 1.9 3.7 6.2 1.9 9.1 1.6 2.2 2 5.1.7 7.1z" fill="currentColor" opacity=".9"/>
+  <path d="M6.5 6.3 4.3 2.6l3.8 1.5zM17.5 6.3l2.2-3.7-3.8 1.5z" fill="currentColor"/>
+  <circle cx="9.5" cy="12.2" r="1.6" fill="#0b1020"/>
+  <circle cx="14.5" cy="12.2" r="1.6" fill="#0b1020"/>
+  <path d="M9.4 16.6c1.7 1.4 3.5 1.4 5.2 0" stroke="#0b1020" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</svg>
